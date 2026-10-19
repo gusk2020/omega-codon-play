@@ -10,17 +10,20 @@
 <body>
 <div id="start" class="screen">
   <h1>Omega Codon</h1>
-  <p class="sub">生き物を選んで、進化を観察する試作版。</p>
-  <h2>1. 生き物（1〜3種）</h2>
+  <p class="sub">生き物を選んで、進化を観察する試作版（Stage 1.9A）。</p>
+  <h2>1. 注目する生き物（1〜3種）</h2>
   <div id="creatures"></div>
-  <h2>2. 土地</h2>
+  <h2>2. 競争相手の数</h2>
+  <div id="rivals" class="chips"></div>
+  <p id="rival-preview" class="note"></p>
+  <h2>3. 土地</h2>
   <div id="envs" class="chips"></div>
-  <h2>3. 乱数の種</h2>
+  <h2>4. 乱数の種</h2>
   <div class="row"><input id="seed" type="number" inputmode="numeric" min="1" value="1"><button id="reseed" class="btn small">ランダム</button></div>
   <button id="go" class="btn primary big">進化を始める</button>
   <h2>セーブデータ</h2>
   <div id="slots-start"></div>
-  <p class="note">シミュレーション本体はStage 1.7の進化エンジンのままです。操作は「分岐点」でだけ出来ます。</p>
+  <p class="note">進化の計算はStage 1.7のエンジンのままです。操作は「分岐点」でだけ出来ます。選ばれなかった多数の生き物は、個別には計算せず、資源・獲物という背景として扱います。</p>
 </div>
 
 <div id="play" class="screen" hidden>
@@ -30,6 +33,7 @@
     <div><b id="h-pop">0</b><small> 体</small></div>
     <button id="menu" class="btn small">メニュー</button>
   </header>
+  <div id="timeline"></div>
   <canvas id="world" width="360" height="260"></canvas>
   <div id="legend"></div>
   <div class="controls">
@@ -37,16 +41,25 @@
     <div id="speeds"><button data-s="0">×1</button><button data-s="1">×3</button><button data-s="2">×10</button><button data-s="3">×40</button></div>
     <button id="save" class="btn small">保存</button>
   </div>
-  <nav id="tabs"><button data-tab="stat" class="on">状況</button><button data-tab="trait">形質</button><button data-tab="graph">推移</button><button data-tab="log">履歴</button></nav>
+  <div class="controls2"><button id="auto" class="chip">自動：OFF</button><span class="note" id="auto-note">分岐点で止まります</span></div>
+  <nav id="tabs"><button data-tab="stat" class="on">状況</button><button data-tab="trait">形質</button><button data-tab="graph">推移</button><button data-tab="env">環境</button><button data-tab="log">履歴</button></nav>
   <section id="tab-stat"></section>
   <section id="tab-trait" hidden></section>
   <section id="tab-graph" hidden><canvas id="chart" width="360" height="200"></canvas><div id="chart-note" class="note"></div></section>
+  <section id="tab-env" hidden>
+    <div class="chips" id="env-modes"></div>
+    <canvas id="habitat" width="360" height="360"></canvas>
+    <div class="envtools" id="env-tools"></div>
+    <div id="env-note" class="note"></div>
+  </section>
   <section id="tab-log" hidden></section>
 </div>
 
 <div id="modal" hidden><div class="card" id="modal-card"></div></div>
 <div id="toast" hidden></div>
 <script src="engine18.js"></script>
+<script src="timemodel.js"></script>
+<script src="habitat.js"></script>
 <script src="game.js"></script>
 <script src="app.js"></script>
 </body>

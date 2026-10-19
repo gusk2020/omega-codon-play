@@ -397,7 +397,7 @@
     const spentBy = { base: 0, memory: 0, regeneration: 0, switching: 0, hunting: 0, acclimation: 0, storage: 0 };
     // regime state (driven only by envRand, so paired seeds share it)
     const memOn = o.memory && o.memoryBenefit;
-    const IFR = o.infection, FEC0 = LOCI[L.fecundity][3], preyFloor = o.preyRefuge * env.prey; let hidStock = o.preyHidden * env.prey; let pendingDisaster = 0;
+    const IFR = o.infection, FEC0 = LOCI[L.fecundity][3], preyFloor = o.preyRefuge * env.prey; let hidStock = o.preyHidden * env.prey; let pendingDisaster = 0; let lifeSumRun = 0;
     const PR = o.pathogenRegime, BR = o.breedingRegime, RR = o.resourceRegime, TR = o.thermalRegime;
     let waveStrain = -1, waveOn = false, waves = 0, breedOpen = true, breedLeft = 0, pulse = 1, parentAgeSum = 0;
     const SIM = [1, 0.6, 0.25];
@@ -622,7 +622,7 @@
           if (!cause) { let b = 0; for (let k = 1; k < 5; k++) if (x.dmgSrc[k] > x.dmgSrc[b]) b = k; cause = DAMAGE_SOURCES[b]; }
           causes[cause]++;
           ledger.lostAtDeath += x.energy;
-          deaths.push([x.age, x.active, x.internal, x.births, x.O, x.Mpeak > 0 ? x.M / x.Mpeak : null, x.hunts, x.catches, x.imPeak > 0 ? x.imS / x.imPeak : null, x.infections, x.imPeak]);
+          lifeSumRun += x.age; deaths.push([x.age, x.active, x.internal, x.births, x.O, x.Mpeak > 0 ? x.M / x.Mpeak : null, x.hunts, x.catches, x.imPeak > 0 ? x.imS / x.imPeak : null, x.infections, x.imPeak]);
           continue;
         }
 
@@ -656,14 +656,14 @@
         disaster(strength = 1.2) { pendingDisaster = strength; },
         stats() {
           const lin = o.lineageCount; const cnt = new Array(lin).fill(0); for (const x of pop) cnt[x.lin]++;
-          let lifeSum = 0; for (const d of deaths) lifeSum += d[0];
+          const lifeSum = lifeSumRun;
           return { t: tNow, population: pop.length, lineageAlive: cnt, births: totalBirths, deaths: deaths.length, meanLifespan: deaths.length ? lifeSum / deaths.length : null,
-            genTime: totalBirths ? parentAgeSum / totalBirths : null, catches, huntSteps, causes: { ...causes }, disasters, preyFraction: patches.reduce((a, p) => a + p.prey / env.prey, 0) / patches.length,
+            genTime: totalBirths ? parentAgeSum / totalBirths : null, parentAgeSum, lifeSum, thermal: patches.reduce((a, p) => a + p.thermal, 0) / patches.length, catches, huntSteps, causes: { ...causes }, disasters, preyFraction: patches.reduce((a, p) => a + p.prey / env.prey, 0) / patches.length,
             resource: patches.reduce((a, p) => a + p.resource, 0) / patches.length, extinctAt, capHit,
             modes: (() => { const m = new Array(NM + 1).fill(0); for (const x of pop) m[x.mode]++; return m; })(),
             meanEnergy: pop.length ? pop.reduce((a, x) => a + x.energy, 0) / pop.length : 0, meanAge: pop.length ? pop.reduce((a, x) => a + x.age, 0) / pop.length : 0 };
         },
-        individuals() { return pop.map((x) => ({ id: x.id, lin: x.lin, age: x.age, energy: x.energy, mode: x.mode, patch: x.patch, damage: x.damage, births: x.births, traits: x.ph, genes: x.genome.genes.length })); },
+        individuals() { return pop.map((x) => ({ id: x.id, lin: x.lin, age: x.age, energy: x.energy, mode: x.mode, patch: x.patch, damage: x.damage, births: x.births, catches: x.catches, hunts: x.hunts, traits: x.ph, genes: x.genome.genes.length })); },
         traitMeans, result: () => buildResult(),
       };
       return live;

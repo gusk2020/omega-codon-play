@@ -53,3 +53,23 @@ canvas#chart{width:100%;aspect-ratio:360/200;display:block}
 
 .kv .w{grid-column:1/-1;text-align:left!important;color:var(--text)!important;margin-top:4px}.kv .w small{color:var(--dim)}
 header b,header small{white-space:nowrap}header small{font-size:12px}
+#timeline{font-size:12px;color:var(--dim);line-height:1.45;margin:0 2px 6px}
+#timeline b{color:var(--text);font-weight:600}
+.controls2{display:flex;gap:10px;align-items:center;margin:0 0 8px}
+.controls2 .chip{min-height:38px;padding:6px 12px;font-size:13px}
+.controls2 .chip.on{border-color:var(--ok);background:#173528}
+.opt.auto{border-style:dashed}
+.grp{margin:10px 0 2px;font-size:13px;color:var(--accent);font-weight:700}
+.lin{display:flex;justify-content:space-between;gap:8px;font-size:14px;padding:3px 0}
+.lin small{color:var(--dim);display:block;font-size:12px}
+.lin .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.dn{color:var(--bad)}.up{color:var(--ok)}
+canvas#habitat{width:100%;aspect-ratio:1/1;display:block;touch-action:none;background:#0a111a;border-radius:10px;margin-top:6px}
+.envtools{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.envtools button{background:var(--panel2);border:1px solid #2c3f55;color:var(--text);border-radius:10px;padding:6px 10px;min-height:40px;font-size:13px}
+.envtools button.on{background:var(--accent);color:#04101f;border-color:var(--accent);font-weight:700}
+.envtools button:disabled{opacity:.4}
+.assume{border-left:3px solid var(--warn);padding-left:8px;margin:8px 0;font-size:13px;color:var(--dim)}
+select{background:var(--panel);color:var(--text);border:1px solid #2c3f55;border-radius:10px;padding:10px;font-size:15px;min-height:44px;width:100%}
+
+.controls2 .chip{white-space:nowrap}
