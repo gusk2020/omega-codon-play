@@ -1,0 +1,733 @@
+/* Omega Codon Stage 1.7 — Stage 1.6 plus single-variable interventions on the reproduction -> predation ->
+ * prey depletion -> extinction pathway. With every new option at its default this engine reproduces Stage 1.6
+ * (../stage1.6/engine16.js) bit for bit; test17.js checks it. Each option moves ONE thing:
+ *   birthScale        multiplies the per-step reproduction probability (births). Offspring still cost energy.
+ *   captureScale      multiplies the probability that a hunt succeeds (predation intensity per hunt).
+ *   preyGrowthScale   multiplies the prey logistic growth rate (prey recovery rate).
+ *   preyHidden        a fraction of prey capacity that hunters cannot reach (PROTECTION ONLY): the stock seeds
+ *                     recovery, but none of it is food.
+ *   preyInflow        extra prey arriving per patch per step, as a fraction of capacity (FOOD ONLY): no stock
+ *                     is protected from hunting.
+ *   preyRefuge        (Stage 1.6) a floor the prey stock is reset to every step: protection AND a free food
+ *                     supply; kept as the positive control, and its food contribution is now measured.
+ * New measurements, so that every intervention can be checked for whether it moved its target variable:
+ * births and catches per individual-step, prey produced / caught / added by the floor per patch-step.
+ *
+ * Stage 1.6 header follows.
+ * Omega Codon Stage 1.6 — Stage 1.5 plus separately controllable mechanisms. With every new
+ * option at its default this engine reproduces Stage 1.5 (../engine15.js) bit for bit; test16.js
+ * checks that. New options (all neutral by default):
+ *   storageSupply        probability weight that a mutation which retargets or adds a gene effect
+ *                        picks the storage trait: P = s/(NL+s); 1 = uniform (Stage 1.5). A mutation-
+ *                        SUPPLY knob; it does not favour any capacity.
+ *   storageEffectScale   multiplier on the size of effect weights aimed at storage (new effects, and
+ *                        point changes of existing ones). An effect-SIZE knob.
+ *   infection            {duration, load}: a fixed infection duration instead of load dynamics, so the
+ *                        infection duration is an independent parameter (the wave interval and the memory
+ *                        retention memoryDecay are the other two).
+ *   infectionSeverity    multiplier on infection damage (pathogen virulence).
+ *   preyRefuge           prey density cannot fall below this fraction of capacity (breaks the
+ *                        prey-depletion pathway); preyScale scales prey capacity only.
+ *   fecundityLocked      reproduction uses the founder fecundity whatever the genome says (breaks the
+ *                        'selection raises fecundity' pathway); every other trait still evolves.
+ * New measurements: infection duration actually observed, wave exposures, exposures that met a held
+ * memory, infections that memory PREVENTED (counted with the same random draw, so it adds none),
+ * storage-carrier fraction over time, prey fraction early / minimum, early population maximum.
+ *
+ * Stage 1.5 header follows.
+ * Omega Codon Stage 1.5 — Stage 1.4 plus evolvable energy storage, lineage tracking
+ * and a memory benefit/cost separation. With every new option at its default this
+ * engine reproduces Stage 1.4 (stage1.4/engine14.js) bit for bit; test15.js checks it.
+ * New options (all off / neutral by default):
+ *   storageEvolvable  true = the energy store capacity is a developed trait (index
+ *                     NL in TRAITS, founder value 3 = Stage 1.4's constant). It has NO
+ *                     founder gene: it can only change when a mutation points an
+ *                     existing gene's effect at it, like any other trait.
+ *   storageCost       energy per step per unit of capacity (applies to the fixed
+ *                     capacity 3 as well when storageEvolvable is false, so a fixed
+ *                     control can pay the same baseline).
+ *   memoryBenefit     false = memory is learned, held and PAID FOR but gives no
+ *                     protection, sensing or predation benefit (isolates the cost).
+ *   lineageCount      >1 = founders are split into that many ancestral lineages
+ *                     (founder i belongs to lineage i % lineageCount, inherited by every
+ *                     descendant); per-lineage counts and extinction steps are reported,
+ *                     so competition is measured directly, not inferred from trait means.
+ * Reported separately and never combined: population (min/median/max), individual
+ * lifespan (calendar / active / internal), and lineage persistence (calendar steps the
+ * lineage existed, censored at the run length). Births are also traced per step.
+ *
+ * Stage 1.4 header follows.
+ * Omega Codon Stage 1.4 — Stage 1.3 plus switchable ecological regimes.
+ * With every new option at its default this engine reproduces Stage 1.3
+ * (stage1.3/engine13.js) bit for bit; test14.js checks that directly.
+ * New options (all off by default), used only to test whether longevity,
+ * low metabolism, cell memory or GRN plasticity can be favoured by selection:
+ *   pathogenRegime  {mode:'same'|'near'|'novel', interval, waveLength, strength}
+ *                   epidemic waves of a pathogen strain with an antigen on a
+ *                   16-position ring; immune memory is antigen-specific and,
+ *                   like all memory here, lives only in original cells (A1)
+ *   memoryCost      false = memory carried and learned at zero energy cost
+ *   memoryDecay     multiplier on the memory decay rate (retention period)
+ *   breedingRegime  {openProb, windowLength}: reproduction possible only in
+ *                   rare, irregular windows (never forbidden outright)
+ *   resourceRegime  {period, pulseLength}: same mean food delivered in pulses
+ *   thermalRegime   {mode:'periodic'|'noise', mean, amp, period}: predictable
+ *                   cycle vs. uncorrelated noise with the same distribution
+ *   plasticity      false = develop at reference signals only, no re-acclimation
+ *   acclimateEvery, acclimateCost  re-acclimation time scale and its energy cost
+ * There is still no fitness function and no bonus for any outcome.
+ *
+ * Stage 1.3 header follows.
+ * Omega Codon Stage 1.3 — gene-block genome with a gene-regulatory network.
+ * An abstract software model, not a biological predictor. It does not create
+ * organs, and it makes no claim about real plants, sharks, deep-sea animals
+ * or archaea. Every capacity is one of the traits or modes declared below;
+ * what evolves is the genome that produces them.
+ *
+ * Changes from Stage 1.2 (stage1.2/engine12.js, kept unchanged):
+ *   - the fixed per-trait loci are replaced by an ordered list of gene blocks
+ *     (structural and regulatory) that develop into the traits through a
+ *     gene-regulatory network; genes are pleiotropic, no gene is one ability;
+ *   - duplication, deletion, substitution, translocation, inversion,
+ *     silencing and de novo genes; genome length and expression cost energy;
+ *   - development responds to signals at birth and re-acclimates every 25
+ *     steps of age (developmental plasticity; regulation=false removes it);
+ *   - reviewer fixes: tie-safe switching threshold, decision quality scored
+ *     on the chosen mode, capacity culls recorded as deaths, true median,
+ *     no argument-spread max.
+ * Behaviour, sensing, regeneration, memory, pathogens, disasters, birth,
+ * death and extinction rules are Stage 1.2's, unchanged.
+ *
+ * Game-specific assumptions (stated, not derived from biology):
+ *   A1 Memory lives only in the original cell cohort. Replaced cells start
+ *      blank and division does not pass memory on. Offspring start at M = 0.
+ *   A2 (switchable, `rateOfLiving`) intrinsic damage accrues per unit of
+ *      metabolic activity ("internal time"), not per calendar step. This is
+ *      a contested hypothesis in real biology; it is an option here so its
+ *      effect can be measured rather than assumed.
+ *   A3 One step = one calendar "season". Internal time is tracked separately
+ *      and is never used as calendar time. No log scale is used anywhere in
+ *      the model or its metrics; a log scale, if any, is a display choice.
+ * There is no fitness function: only survival and reproduction select.
+ */
+(function (root, factory) {
+  const api = factory();
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  root.OmegaEngine18 = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  const MODES = ['dormant', 'wait', 'explore', 'hunt', 'repair'];
+  const M_DORMANT = 0, M_WAIT = 1, M_EXPLORE = 2, M_HUNT = 3, M_REPAIR = 4, M_TRANSITION = 5;
+  const NM = MODES.length;
+  const INPUTS = ['bias', 'preyCue', 'scarcity', 'thermal', 'danger', 'energy', 'damage', 'infected', 'rhythmSin', 'rhythmCos'];
+  const NI = INPUTS.length;
+
+  // Traits: [name, min, max, founder value]. In Stage 1.3 these are no longer
+  // loci: each is the developmental read-out of the gene-regulatory network.
+  const LOCI = [
+    ['metabolism', 0.2, 1.6, 1.0],     // scales every cost, every capacity, and (A2) ageing
+    ['movement', 0, 1, 0.6],           // foraging reach while exploring
+    ['predation', 0, 1, 0.4],          // capture ability while hunting
+    ['tolerance', 0, 1, 0.4],          // resistance to heat/cold and disasters
+    ['immune', 0, 1, 0.4],
+    ['fecundity', 0, 1, 0.6],
+    ['repairRate', 0, 1, 0.5],         // regeneration effort per step
+    ['replaceRatio', 0, 1, 0.3],       // share of regeneration done by replacing cells
+    ['dormancyDepth', 0.05, 0.5, 0.3], // metabolic fraction while dormant (lower = deeper)
+    ['falsePositive', 0.02, 0.5, 0.25],
+    ['falseNegative', 0.02, 0.5, 0.25],
+    ['memoryLearn', 0, 1, 0.3],        // acquisition rate (costs while carried)
+    ['memoryUpkeep', 0.05, 1, 0.5],    // maintenance spend: more = slower decay, more cost
+    ['switchThreshold', 0, 2, 0.4],   // a new mode must beat the current one by this much
+    ['rhythmPeriod', 4, 60, 20],
+    ['rhythmPhase', -3.1416, 3.1416, 0],
+  ];
+  const L = Object.fromEntries(LOCI.map((l, i) => [l[0], i]));
+  const NL = LOCI.length;
+  // TRAITS = LOCI plus the energy-store capacity (developed like every trait; no founder gene)
+  const TRAITS = LOCI.concat([['storage', 1, 10, 3]]);
+  const NT = TRAITS.length;
+
+  const DEFAULTS = {
+    seed: 1, steps: 2000, founders: 100, patches: 4, maxPopulation: 6000,
+    environment: 'rich', variable: true,
+    selection: true, memory: true, switching: true, replacement: true, rateOfLiving: true,
+    mutation: true, mutationRate: 0.3, extrinsicMortality: 0.01, migrationRate: 0.02,
+    sampleEvery: 20, founderGenomes: null, maxEdges: 30, regulation: true, resourceScale: 1,
+    pathogenRegime: null, memoryCost: true, memoryDecay: 1, breedingRegime: null, resourceRegime: null, thermalRegime: null,
+    plasticity: true, acclimateEvery: 25, acclimateCost: 0,
+    storageEvolvable: false, storageCost: 0, memoryBenefit: true, lineageCount: 1,
+    storageSupply: 1, storageEffectScale: 1, infection: null, infectionSeverity: 1, preyRefuge: 0, preyScale: 1, fecundityLocked: false,
+    birthScale: 1, captureScale: 1, preyGrowthScale: 1, preyHidden: 0, preyInflow: 0, live: false,
+  };
+
+  // resource: plant food per patch per step; prey: prey carrying capacity per
+  // patch; injury: damage multiplier while hunting.
+  const ENVIRONMENTS = {
+    rich:            { resource: 22, prey: 60, thermal: 0.2,  pathogen: 0.04, disasterRate: 0.002, injury: 1 },
+    scarce:          { resource: 5,  prey: 15, thermal: 0.3,  pathogen: 0.04, disasterRate: 0.002, injury: 1 },
+    plague:          { resource: 18, prey: 40, thermal: 0.2,  pathogen: 0.28, disasterRate: 0.002, injury: 1 },
+    preyless:        { resource: 10, prey: 3,  thermal: 0.25, pathogen: 0.04, disasterRate: 0.002, injury: 1 },
+    damageHeavy:     { resource: 16, prey: 40, thermal: 0.8,  pathogen: 0.06, disasterRate: 0.004, injury: 2.5 },
+    extremeDisaster: { resource: 16, prey: 40, thermal: 0.4,  pathogen: 0.06, disasterRate: 0.03, injury: 1 },
+  };
+
+  const ENERGY_MAX = 3, MATURITY_AGE = 3, OFFSPRING_COST = 0.55, OFFSPRING_ENERGY = 0.45;
+  const SWITCH_COST = 0.02, HUNT_GAIN = 1.5;
+  const MODE_METAB = [null, 0.6, 1.0, 1.3, 0.9, 0.6]; // dormant comes from its locus
+
+  function rng(seed) {
+    let x = Number(seed) >>> 0;
+    return function () {
+      x = (x + 0x6D2B79F5) >>> 0;
+      let t = x;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+
+  // ---- genome: gene blocks + gene-regulatory network (Stage 1.3) ------------
+  // A genome is an ordered list of gene blocks plus the behaviour circuit.
+  //   structural gene {k:0, prom, sens, len, on, eff:[[trait, weight], ...]}
+  //   regulatory gene {k:1, prom, sens, len, on, bind, w}
+  // prom/bind are binding motifs on a 16-position ring. A regulatory gene's
+  // product (a transcription factor) acts on every gene whose promoter motif
+  // is close to its binding motif, more strongly on near neighbours in the
+  // sequence (so order, translocation and inversion matter). sens couples a
+  // promoter to one developmental signal. A structural gene's product shifts
+  // one to three traits (pleiotropy), so no gene is one ability, and which
+  // traits it touches can mutate. Traits are read out through a sigmoid from
+  // baselines calibrated once so that the founder reproduces Stage 1.2's
+  // founder phenotype exactly; the calibration constants never evolve.
+  const MOTIFS = 16, MAX_GENES = 64, MIN_GENES = 4;
+  const DEV_SIGNALS = ['scarcity', 'pathogen', 'thermal', 'damage'];
+  const NDS = DEV_SIGNALS.length;
+  const REFERENCE_DEV = [0.5, 0.2, 0.25, 0.1];
+  const GENE_COST = 0.0008, EXPRESSION_COST = 0.0008, ACCLIMATE_EVERY = 25;
+  const logit = (p) => Math.log(p / (1 - p));
+  const sig = (v) => 1 / (1 + Math.exp(-Math.max(-30, Math.min(30, v))));
+
+  function motifDistance(a, b) { const d = Math.abs(a - b) % MOTIFS; return Math.min(d, MOTIFS - d); }
+
+  function founderGenome() {
+    const r = rng(20261017);
+    const genes = [];
+    // every trait is touched by at least one gene, most by several
+    for (let k = 0; k < NL; k++) genes.push(structural(r, [[k, 0.6 + 0.4 * r()]]));
+    for (let i = 0; i < 8; i++) {
+      const eff = [], n = 1 + Math.floor(r() * 3);
+      for (let j = 0; j < n; j++) eff.push([Math.floor(r() * NL), (r() - 0.5) * 1.6]);
+      genes.splice(Math.floor(r() * genes.length), 0, structural(r, eff));
+    }
+    for (let i = 0; i < 6; i++) genes.splice(Math.floor(r() * genes.length), 0, regulatory(r));
+    const e = (m, i, w) => ({ m, i: INPUTS.indexOf(i), w });
+    const edges = [
+      e(M_EXPLORE, 'bias', 0.6), e(M_WAIT, 'bias', 0.1), e(M_HUNT, 'bias', -0.3), e(M_REPAIR, 'bias', -0.6), e(M_DORMANT, 'bias', -1.2),
+      e(M_HUNT, 'preyCue', 1.4), e(M_REPAIR, 'damage', 1.6), e(M_DORMANT, 'scarcity', 0.8), e(M_DORMANT, 'thermal', 0.5),
+      e(M_WAIT, 'energy', 0.4),
+    ];
+    return { genes, edges };
+  }
+  function structural(r, eff) {
+    return { k: 0, prom: Math.floor(r() * MOTIFS), sens: r() < 0.3 ? [Math.floor(r() * NDS), (r() - 0.5) * 2] : null, len: 1 + Math.floor(r() * 3), on: true, eff };
+  }
+  function regulatory(r) {
+    return { k: 1, prom: Math.floor(r() * MOTIFS), sens: r() < 0.5 ? [Math.floor(r() * NDS), (r() - 0.5) * 3] : null, len: 1 + Math.floor(r() * 2), on: true,
+      bind: Math.floor(r() * MOTIFS), w: (r() - 0.5) * 4 };
+  }
+  const cloneGene = (g) => ({ ...g, sens: g.sens ? g.sens.slice() : null, eff: g.eff ? g.eff.map((e) => e.slice()) : undefined });
+  const cloneGenome = (g) => ({ genes: g.genes.map(cloneGene), edges: g.edges.map((x) => ({ m: x.m, i: x.i, w: x.w })) });
+
+  // Regulatory wiring depends only on the genome, so it is computed once per
+  // genome object (clones share the object) and cached on it.
+  function wiring(genome) {
+    if (genome._wiring) return genome._wiring;
+    const gs = genome.genes, n = gs.length, links = [];
+    for (let i = 0; i < n; i++) {
+      if (!gs[i].on) continue;
+      for (let j = 0; j < n; j++) {
+        const tf = gs[j];
+        if (tf.k !== 1 || !tf.on || i === j) continue;
+        const d = motifDistance(gs[i].prom, tf.bind);
+        if (d > 2) continue;
+        const a = (d === 0 ? 1 : d === 1 ? 0.5 : 0.2) * (Math.abs(i - j) <= 2 ? 1.5 : 1);
+        links.push(i, j, a * tf.w);
+      }
+    }
+    let len = 0; for (const g of gs) len += g.len;
+    genome._wiring = { links, len };
+    return genome._wiring;
+  }
+
+  // Development: iterate the network to a near-steady expression under the
+  // given signals, then read traits out. regulation=false removes every
+  // regulatory and signal term (an additive genotype->phenotype map).
+  function expressGenes(genome, signals, regulation) {
+    const gs = genome.genes, n = gs.length, x = new Float64Array(n), w = wiring(genome);
+    for (let i = 0; i < n; i++) x[i] = gs[i].on ? sig(-0.5) : 0;
+    if (regulation) {
+      const input = new Float64Array(n);
+      for (let round = 0; round < 4; round++) {
+        for (let i = 0; i < n; i++) input[i] = gs[i].sens ? gs[i].sens[1] * signals[gs[i].sens[0]] : 0;
+        for (let k = 0; k < w.links.length; k += 3) input[w.links[k]] += w.links[k + 2] * x[w.links[k + 1]];
+        for (let i = 0; i < n; i++) x[i] = gs[i].on ? sig(-0.5 + input[i]) : 0;
+      }
+    }
+    return x;
+  }
+  function rawTraitDrive(genome, x) {
+    const d = new Float64Array(NT), gs = genome.genes;
+    for (let i = 0; i < gs.length; i++) if (gs[i].k === 0 && x[i] > 0) for (const [t, wt] of gs[i].eff) d[t] += wt * x[i];
+    return d;
+  }
+  const CALIBRATION = {};
+  function calibration(regulation) {
+    const key = regulation ? 'on' : 'off';
+    if (CALIBRATION[key]) return CALIBRATION[key];
+    const f = founderGenome(), d = rawTraitDrive(f, expressGenes(f, REFERENCE_DEV, regulation));
+    CALIBRATION[key] = TRAITS.map((l, k) => logit((l[3] - l[1]) / (l[2] - l[1])) - d[k]);
+    return CALIBRATION[key];
+  }
+  // Returns {traits, geneCost}; traits are in the same units as Stage 1.2's loci.
+  function develop(genome, signals, regulation = true) {
+    const x = expressGenes(genome, signals, regulation), d = rawTraitDrive(genome, x), base = calibration(regulation);
+    const traits = new Array(NT);
+    for (let k = 0; k < NT; k++) { const [, lo, hi] = TRAITS[k]; traits[k] = lo + (hi - lo) * sig(base[k] + d[k]); }
+    let expr = 0; for (let i = 0; i < x.length; i++) expr += x[i] * genome.genes[i].len;
+    return { traits, geneCost: GENE_COST * wiring(genome).len + EXPRESSION_COST * expr };
+  }
+
+  function mutate(parent, r, maxEdges, nTraits = NL, mo = null) {
+    const g = cloneGenome(parent), gs = g.genes;
+    const sup = mo ? mo.supply : 1, sc = mo ? mo.scale : 1;
+    const pick = () => (nTraits > NL && sup !== 1 ? (r() < sup / (NL + sup) ? NL : Math.floor(r() * NL)) : Math.floor(r() * nTraits));
+    const ops = 1 + (r() < 0.3 ? 1 : 0);
+    for (let n = 0; n < ops; n++) {
+      const u = r(), i = Math.floor(r() * gs.length), gene = gs[i];
+      if (u < 0.16) { // point: effect weight (structural) or TF strength (regulatory)
+        if (gene.k === 0) { const e = gene.eff[Math.floor(r() * gene.eff.length)]; const k = e[0] === NL ? sc : 1; e[1] = clamp(e[1] + (r() - 0.5) * 0.8 * k, -3 * k, 3 * k); }
+        else gene.w = clamp(gene.w + (r() - 0.5) * 1.5, -4, 4);
+      } else if (u < 0.22) { // substitution: effect target or a new effect
+        if (gene.k === 0) { if (gene.eff.length < 3 && r() < 0.5) { const t = pick(); gene.eff.push([t, (r() - 0.5) * 1.2 * (t === NL ? sc : 1)]); } else gene.eff[Math.floor(r() * gene.eff.length)][0] = pick(); }
+        else gene.bind = Math.floor(r() * MOTIFS);
+      } else if (u < 0.28) { // promoter / signal-sensitivity change (rewiring)
+        if (r() < 0.6) gene.prom = Math.floor(r() * MOTIFS); else gene.sens = r() < 0.3 ? null : [Math.floor(r() * NDS), (r() - 0.5) * 3];
+      } else if (u < 0.36) { // tandem duplication
+        if (gs.length < MAX_GENES) gs.splice(i + 1, 0, cloneGene(gene));
+      } else if (u < 0.44) { // deletion
+        if (gs.length > MIN_GENES) gs.splice(i, 1);
+      } else if (u < 0.48) { // translocation
+        const [x] = gs.splice(i, 1); gs.splice(Math.floor(r() * (gs.length + 1)), 0, x);
+      } else if (u < 0.51) { // inversion of a segment
+        const j = Math.min(gs.length, i + 2 + Math.floor(r() * 4)); const seg = gs.slice(i, j).reverse(); gs.splice(i, seg.length, ...seg);
+      } else if (u < 0.55) { // silencing / reactivation
+        gene.on = !gene.on;
+      } else if (u < 0.57) { // de novo gene (rare)
+        if (gs.length < MAX_GENES) gs.splice(i, 0, r() < 0.5 ? (() => { const t = pick(); return structural(r, [[t, (r() - 0.5) * 1.2 * (t === NL ? sc : 1)]]); })() : regulatory(r));
+      } else if (u < 0.75) { // behaviour circuit: rewire a weight
+        if (g.edges.length) { const x = g.edges[Math.floor(r() * g.edges.length)]; x.w = clamp(x.w + (r() - 0.5) * 1.2, -4, 4); }
+      } else if (u < 0.88) {
+        if (g.edges.length < maxEdges) g.edges.push({ m: Math.floor(r() * NM), i: Math.floor(r() * NI), w: (r() - 0.5) * 3 });
+      } else if (g.edges.length) g.edges.splice(Math.floor(r() * g.edges.length), 1);
+    }
+    return g;
+  }
+
+  function genomeStats(genome) {
+    const gs = genome.genes, w = wiring(genome);
+    const structuralGenes = gs.filter((g) => g.k === 0);
+    return { genes: gs.length, totalLength: w.len, regulatory: gs.length - structuralGenes.length, silenced: gs.filter((g) => !g.on).length,
+      regulatoryLinks: w.links.length / 3, signalSensitive: gs.filter((g) => g.sens && g.on).length,
+      pleiotropy: structuralGenes.length ? structuralGenes.reduce((a, g) => a + new Set(g.eff.map((e) => e[0])).size, 0) / structuralGenes.length : 0 };
+  }
+
+  function decide(edges, input, switching, score, current, threshold) {
+    score.fill(0);
+    for (let k = 0; k < edges.length; k++) {
+      const e = edges[k];
+      if (!switching && e.i !== 0) continue; // switching off: genetic default only
+      score[e.m] += e.w * input[e.i];
+    }
+    let best = 0;
+    for (let m = 1; m < NM; m++) if (score[m] > score[best]) best = m;
+    // ties and sub-threshold advantages keep the current mode
+    return best !== current && score[best] - score[current] <= threshold ? current : best;
+  }
+
+  // ---- simulation -----------------------------------------------------------
+  function simulate(userOptions = {}) {
+    const o = { ...DEFAULTS, ...userOptions };
+    const baseEnv = ENVIRONMENTS[o.environment];
+    if (!baseEnv) throw new Error('unknown environment: ' + o.environment);
+    const env = { ...baseEnv, resource: baseEnv.resource * o.resourceScale, prey: baseEnv.prey * o.resourceScale * o.preyScale };
+    o.steps = clamp(Math.floor(o.steps), 0, 100000);
+    o.founders = clamp(Math.floor(o.founders), 0, o.maxPopulation);
+    o.patches = clamp(Math.floor(o.patches), 1, 32);
+    const t0 = Date.now();
+    // Three independent streams: the environment's history is identical for
+    // every condition run with the same seed (paired design), and mutation
+    // draws never shift demographic draws.
+    const rand = rng(o.seed), envRand = rng((o.seed * 2654435761) ^ 0x51ED27), mutRand = rng((o.seed * 40503) ^ 0xA5A5A5);
+
+    const founder = founderGenome();
+    const patches = [];
+    for (let p = 0; p < o.patches; p++) patches.push({ resource: env.resource, thermal: env.thermal, pathogen: env.pathogen,
+      target: { resource: env.resource, thermal: env.thermal, pathogen: env.pathogen }, prey: env.prey,
+      famine: 0, hit: 0, count: 0, infected: 0, demand: 0, eaten: 0 });
+
+    let nextId = 1;
+    const refKey = o.regulation ? '_refOn' : '_refOff';
+    const carrier = (g) => (g._stc !== undefined ? g._stc : (g._stc = g.genes.some((x) => x.k === 0 && x.eff.some((e) => e[0] === NL))));
+    const genotypeTraits = (genome) => genome[refKey] || (genome[refKey] = develop(genome, REFERENCE_DEV, o.regulation).traits);
+    const devSignals = (p, damage) => [clamp(p.count * 0.35 / (p.resource + 1), 0, 2), clamp(p.pathogen * 3, 0, 2), p.thermal, clamp(damage, 0, 2)];
+    const developInto = (x, signals) => { const d = develop(o.selection ? x.genome : founder, o.plasticity ? signals : REFERENCE_DEV, o.regulation); x.ph = d.traits; x.gcost = d.geneCost; x.cap = o.storageEvolvable ? x.ph[NL] : ENERGY_MAX; };
+    const startInf = (x) => { x.load = IFR ? IFR.load : 0.2; x.infLeft = IFR ? IFR.duration : 0; x.infAge = 0; };
+    const newborn = (genome, patch, energy, lin = 0) => birth({ id: nextId++, lin, cap: ENERGY_MAX, genome, patch, energy, age: 0, internal: 0, active: 0,
+      damage: 0, load: 0, O: 1, M: 0, Mpeak: 0, P: 0, mode: M_EXPLORE, pending: -1, arousal: 0, births: 0,
+      dmgSrc: [0, 0, 0, 0, 0], hunts: 0, catches: 0, present: false, strain: -1, imA: -1, imS: 0, imPeak: 0, infections: 0, reinfections: 0, acclimCost: 0, infLeft: 0, infAge: 0 });
+    const birth = (x) => { developInto(x, devSignals(patches[x.patch], 0)); return x; };
+    let pop = [];
+    for (let i = 0; i < o.founders; i++) pop.push(newborn(cloneGenome(o.founderGenomes ? o.founderGenomes[i % o.founderGenomes.length] : founder), i % o.patches, 1.0, i % o.lineageCount));
+
+    // Energy ledger: sum(alive energy) == start + intake - spent - reproOverhead - lostAtDeath - overflow + deficit.
+    const ledger = { start: pop.reduce((a, x) => a + x.energy, 0), intakePlant: 0, intakePrey: 0, spent: 0, reproOverhead: 0, lostAtDeath: 0, overflow: 0, deficit: 0 };
+    const spentBy = { base: 0, memory: 0, regeneration: 0, switching: 0, hunting: 0, acclimation: 0, storage: 0 };
+    // regime state (driven only by envRand, so paired seeds share it)
+    const memOn = o.memory && o.memoryBenefit;
+    const IFR = o.infection, FEC0 = LOCI[L.fecundity][3], preyFloor = o.preyRefuge * env.prey; let hidStock = o.preyHidden * env.prey; let pendingDisaster = 0;
+    const PR = o.pathogenRegime, BR = o.breedingRegime, RR = o.resourceRegime, TR = o.thermalRegime;
+    let waveStrain = -1, waveOn = false, waves = 0, breedOpen = true, breedLeft = 0, pulse = 1, parentAgeSum = 0;
+    const SIM = [1, 0.6, 0.25];
+    const antigenSimilarity = (a, b) => { if (a < 0 || b < 0) return 0; const d = motifDistance(a, b); return d < 3 ? SIM[d] : 0; };
+    const imStats = { infectedInWave: 0, protectedHits: 0, reinfectionSameAntigen: 0, infDurSum: 0, infDurN: 0, exposures: 0, exposuresWithMemory: 0, protSum: 0, prevented: 0, expectedPrevented: 0 };
+    const eco = { sum: 0, n: 0, min: Infinity, earlySum: 0, earlyN: 0, produced: 0, floorAdded: 0 };
+    const DAMAGE_SOURCES = ['senescence', 'thermal', 'pathogen', 'disaster', 'injury'];
+    const causes = { capacityCull: 0, extrinsic: 0, starvation: 0, senescence: 0, thermal: 0, pathogen: 0, disaster: 0, injury: 0 };
+    const deaths = []; // compact records: calendar, active, internal, births, O, memoryRetention
+    const decisions = { tp: 0, fp: 0, fn: 0, tn: 0 }, sensing = { cueWhenAbsent: 0, absent: 0, missWhenPresent: 0, present: 0 };
+    const modeSteps = new Array(NM + 1).fill(0);
+    let disasters = 0, envSignature = 0, huntSteps = 0, huntEncounters = 0, catches = 0, totalBirths = 0, extinctAt = null, capHit = false, switches = 0;
+    const popTrace = new Int32Array(o.steps + 1), birthTrace = new Int32Array(o.steps + 1);
+    const LT = o.lineageCount > 1, linExtinctAt = new Array(o.lineageCount).fill(null);
+    popTrace[0] = pop.length;
+    const history = [];
+    const input = new Float64Array(NI), score = new Float64Array(NM);
+
+    function traitMeans() {
+      // Traits are reported GENOTYPICALLY: what each individual's own genome
+      // develops into at the reference signals. Under selection=false this is
+      // the drifting genome, not the founder phenotype the individual lives by.
+      const m = new Array(NL).fill(0); let O = 0, Mm = 0, edges = 0, stor = 0, carriers = 0;
+      for (const x of pop) { const gt = genotypeTraits(x.genome); for (let k = 0; k < NL; k++) m[k] += gt[k]; stor += gt[NL]; if (carrier(x.genome)) carriers++; O += x.O; Mm += x.M; edges += x.genome.edges.length; }
+      const n = pop.length || 1;
+      let genes = 0, links = 0, plei = 0;
+      for (const x of pop) { const gst = genomeStats(x.genome); genes += gst.genes; links += gst.regulatoryLinks; plei += gst.pleiotropy; }
+      return { loci: Object.fromEntries(LOCI.map((l, k) => [l[0], m[k] / n])), meanO: O / n, meanM: Mm / n, meanEdges: edges / n, meanStorage: stor / n, storageCarriers: carriers / n,
+        meanGenes: genes / n, meanRegLinks: links / n, meanPleiotropy: plei / n };
+    }
+    function sample(t) {
+      const tm = traitMeans();
+      history.push({ step: t, population: pop.length, ...tm, prey: patches.reduce((a, p) => a + p.prey, 0) / patches.length });
+    }
+    sample(0);
+
+    const stepOnce = (t) => {
+      if (pop.length === 0) { if (extinctAt === null) extinctAt = t - 1; return false; }
+
+      if (PR) { // epidemic waves
+        const phase = t % PR.interval;
+        if (phase === 1) { waves++; waveStrain = PR.mode === 'same' ? 0 : PR.mode === 'near' ? (waves - 1) % MOTIFS : Math.floor(envRand() * MOTIFS); }
+        waveOn = phase >= 1 && phase <= PR.waveLength;
+      }
+      if (BR) { if (breedLeft > 0) breedLeft--; else if (envRand() < BR.openProb) breedLeft = BR.windowLength; breedOpen = breedLeft > 0; }
+      if (RR) pulse = (t % RR.period) < RR.pulseLength ? RR.period / RR.pulseLength : 0;
+      for (const p of patches) {
+        if (o.variable && envRand() < 0.01) p.target = { resource: env.resource * (0.5 + envRand()), thermal: clamp(env.thermal + (envRand() - 0.5) * 0.6, 0, 1), pathogen: clamp(env.pathogen * (0.4 + envRand() * 1.8), 0, 0.6) };
+        p.resource += (p.target.resource - p.resource) * 0.05;
+        p.thermal += (p.target.thermal - p.thermal) * 0.05;
+        p.pathogen += (p.target.pathogen - p.pathogen) * 0.05;
+        if (TR) p.thermal = TR.mode === 'periodic' ? TR.mean + TR.amp * Math.sin(6.283185307 * t / TR.period) : TR.mean + TR.amp * Math.sin(6.283185307 * envRand());
+        p.hit = 0;
+        if (envRand() < env.disasterRate) { p.hit = 0.6 + envRand() * 0.9; p.famine = 15; disasters++; envSignature = (envSignature * 31 + t) % 1000000007; }
+        if (pendingDisaster) { p.hit = Math.max(p.hit, pendingDisaster); p.famine = 15; } // player-triggered (live mode only); draws no random numbers
+        { const grow = 0.3 * o.preyGrowthScale * p.prey * (1 - p.prey / env.prey) + 0.002 * env.prey + o.preyInflow * env.prey; p.prey += grow; if (grow > 0) eco.produced += grow; } // logistic growth + trickle immigration + optional inflow
+        p.count = 0; p.infected = 0; p.demand = 0; p.eaten = 0;
+      }
+      for (const x of pop) { const p = patches[x.patch]; p.count++; if (x.load > 0) p.infected++; }
+
+      // 1. sense, decide, set demand
+      for (const x of pop) {
+        const p = patches[x.patch];
+        x.acclimCost = 0;
+        if (o.plasticity && x.age > 0 && x.age % o.acclimateEvery === 0) { developInto(x, devSignals(p, x.damage)); x.acclimCost = o.acclimateCost; } // re-acclimation
+        const g = o.selection ? x.genome : founder, lo = x.ph;
+        const metab = lo[L.metabolism];
+        const prod = p.resource * (p.famine > 0 ? 0.4 : 1) * pulse;
+        const memF = memOn ? x.M : 0;
+        // An encounter persists until the prey is caught or slips away, so a hunt
+        // started on a cue can still find it after the switching delay.
+        x.present = (x.present && rand() < 0.7) || rand() < 0.5 * Math.min(1, Math.max(0, p.prey - hidStock) / env.prey);
+        const fpE = lo[L.falsePositive] * (1 - 0.6 * memF), fnE = lo[L.falseNegative] * (1 - 0.6 * memF);
+        x.cue = x.present ? rand() >= fnE : rand() < fpE;
+        if (x.present) { sensing.present++; if (!x.cue) sensing.missWhenPresent++; } else { sensing.absent++; if (x.cue) sensing.cueWhenAbsent++; }
+
+        if (x.arousal > 0) { x.arousal--; x.switchCost = 0; x.eff = x.arousal > 0 ? M_DORMANT : M_TRANSITION; if (x.arousal === 0) x.mode = x.pending; }
+        else {
+          input[0] = 1; input[1] = x.cue ? 1 : 0; input[2] = clamp(p.count * 0.35 / (prod + 1), 0, 2); input[3] = p.thermal;
+          input[4] = p.famine > 0 ? 1 : 0; input[5] = x.energy / x.cap; input[6] = clamp(x.damage, 0, 2); input[7] = x.load > 0 ? 1 : 0;
+          const ph = 6.283185 * x.age / lo[L.rhythmPeriod] + lo[L.rhythmPhase];
+          input[8] = Math.sin(ph); input[9] = Math.cos(ph);
+          const d = decide(g.edges, input, o.switching, score, x.mode, lo[L.switchThreshold]);
+          x.eff = x.mode;
+          if (d !== x.mode) {
+            switches++;
+            x.switchCost = SWITCH_COST * metab;
+            if (x.mode === M_DORMANT) { // waking takes time; deeper dormancy is slower
+              x.arousal = Math.round((0.5 - lo[L.dormancyDepth]) * 6); x.pending = d;
+              if (x.arousal === 0) { x.mode = d; x.eff = M_TRANSITION; } else x.eff = M_DORMANT;
+            } else { x.mode = d; x.eff = M_TRANSITION; }
+          } else x.switchCost = 0;
+          // decision quality is scored on what the circuit chose, judged against
+          // whether prey was actually present at decision time
+          if (d !== M_DORMANT) {
+            const hunting = d === M_HUNT;
+            if (hunting && x.present) decisions.tp++; else if (hunting) decisions.fp++; else if (x.present) decisions.fn++; else decisions.tn++;
+          }
+        }
+        if (x.eff === M_EXPLORE) x.demand = (0.3 + 0.7 * lo[L.movement]) * Math.min(1.3, metab);
+        else if (x.eff === M_WAIT) x.demand = 0.15 * Math.min(1.3, metab);
+        else x.demand = 0;
+        p.demand += x.demand;
+      }
+
+      // 2. energy, infection, damage, regeneration, death, reproduction
+      const next = [];
+      for (const x of pop) {
+        const lo = x.ph, p = patches[x.patch], mode = x.eff;
+        const metab = lo[L.metabolism];
+        modeSteps[mode]++;
+        const modeMetab = mode === M_DORMANT ? lo[L.dormancyDepth] : MODE_METAB[mode];
+        const activity = metab * modeMetab;
+        const prod = p.resource * (p.famine > 0 ? 0.4 : 1) * pulse;
+        let gain = 0;
+        if (x.demand > 0) {
+          gain = Math.min(x.demand * prod / (prod + 4), prod * x.demand / (p.demand || 1));
+          ledger.intakePlant += gain; p.eaten += gain;
+        }
+        let huntCost = 0;
+        if (mode === M_HUNT) {
+          huntSteps++; x.hunts++; huntCost = 0.05 * metab;
+          // hunting is an active search, not only a reaction to a cue
+          if (!x.present) x.present = rand() < 0.6 * Math.min(1, Math.max(0, p.prey - hidStock) / env.prey) * (0.4 + 0.6 * lo[L.movement]);
+          if (x.present && p.prey - hidStock >= 1) {
+            huntEncounters++;
+            const memF = memOn ? x.M : 0;
+            const pc = clamp(1.5 * lo[L.predation] * (0.4 + 0.6 * Math.min(1.2, metab)) * (1 + 0.8 * memF) * o.captureScale, 0, 0.95);
+            if (rand() < pc) {
+              gain += HUNT_GAIN; ledger.intakePrey += HUNT_GAIN; p.prey -= 1; catches++; x.catches++; x.present = false;
+              if (o.memory) x.M += lo[L.memoryLearn] * (x.O - x.M) * 0.2;
+            }
+          }
+          if (rand() < 0.3) { const inj = 0.05 * env.injury * (1 - 0.5 * lo[L.tolerance]); x.damage += inj; x.dmgSrc[4] += inj; }
+        }
+        const locusCost = 0.03 * lo[L.movement] + 0.04 * lo[L.predation] + 0.05 * lo[L.tolerance] + 0.06 * lo[L.immune]
+          + 0.05 * ((0.5 - lo[L.falsePositive]) + (0.5 - lo[L.falseNegative])) / 0.48 + x.gcost;
+        const base = activity * (0.05 + locusCost);
+        const memCost = o.memory && o.memoryCost ? 0.02 * lo[L.memoryLearn] + 0.06 * lo[L.memoryUpkeep] * (PR ? x.M + x.imS : x.M) : 0;
+        // regeneration
+        const r = lo[L.repairRate] * (mode === M_REPAIR ? 2.5 : mode === M_DORMANT ? 0.5 : 1) * (x.energy > 0 ? 1 : 0.3) * Math.sqrt(Math.min(1.2, metab));
+        const rho = o.replacement ? lo[L.replaceRatio] : 0;
+        const fix = r * (1 - rho), rep = r * rho, eff = 1 / (1 + x.P / 3);
+        const regenCost = 0.10 * fix + 0.05 * rep;
+        const storCost = o.storageCost * (o.storageEvolvable ? x.cap : ENERGY_MAX);
+        const cost = base + memCost + regenCost + huntCost + x.switchCost + x.acclimCost + storCost;
+        spentBy.acclimation += x.acclimCost; spentBy.storage += storCost;
+        spentBy.base += base; spentBy.memory += memCost; spentBy.regeneration += regenCost; spentBy.hunting += huntCost; spentBy.switching += x.switchCost;
+        ledger.spent += cost;
+        x.energy += gain - cost;
+
+        // infection (exposure depends on mode)
+        const expo = mode === M_EXPLORE || mode === M_HUNT ? 1.5 : mode === M_DORMANT ? 0.5 : 1;
+        const memF = memOn ? x.M : 0;
+        if (x.load <= 0) {
+          const pressure = p.pathogen + 0.35 * (p.count ? p.infected / p.count : 0);
+          if (!PR) { if (rand() < pressure * expo * (1 - 0.85 * lo[L.immune]) * (1 - 0.5 * memF)) startInf(x); }
+          else {
+            // background infections carry no antigen; wave infections carry the wave's strain
+            const wave = waveOn ? PR.strength : 0, sim = memOn ? antigenSimilarity(x.imA, waveStrain) : 0;
+            const pBack = pressure * expo * (1 - 0.85 * lo[L.immune]) * (1 - 0.5 * memF);
+            const pWave = wave * expo * (1 - 0.85 * lo[L.immune]) * (1 - 0.5 * memF) * (1 - 0.8 * x.imS * sim);
+            if (wave && sim > 0 && x.imS > 0) imStats.protectedHits += wave * expo * 0.8 * x.imS * sim;
+            const pNoMem = wave * expo * (1 - 0.85 * lo[L.immune]);
+            if (wave) { imStats.exposures++; if (sim > 0 && x.imS > 0) { imStats.exposuresWithMemory++; imStats.protSum += 0.8 * x.imS * sim; } }
+            const u = rand();
+            if (u >= pWave && u < pNoMem) imStats.prevented++;
+            imStats.expectedPrevented += pNoMem - pWave;
+            if (u < pWave) { startInf(x); x.strain = waveStrain; x.infections++; imStats.infectedInWave++; if (x.imA === waveStrain) { x.reinfections++; imStats.reinfectionSameAntigen++; } }
+            else if (u < pWave + pBack) { startInf(x); x.strain = -1; }
+          }
+        } else {
+          x.infAge++;
+          if (IFR) { x.infLeft--; x.load = x.infLeft > 0 ? IFR.load : 0; }
+          else x.load += 0.3 * x.load * (1 - lo[L.immune]) - 0.12 * lo[L.immune] * (1 + 0.5 * memF);
+          if (x.load <= 0) {
+            x.load = 0; imStats.infDurSum += x.infAge; imStats.infDurN++; if (o.memory) x.M += lo[L.memoryLearn] * (x.O - x.M) * 0.2;
+            if (PR && o.memory && x.strain >= 0) { // antigen-specific memory, one slot, held in original cells
+              if (x.imA !== x.strain) { x.imA = x.strain; x.imS = 0; }
+              x.imS += lo[L.memoryLearn] * (x.O - x.imS) * 0.5; if (x.imS > x.imPeak) x.imPeak = x.imS;
+            }
+            x.strain = -1;
+          }
+          else if (x.load > 2) x.load = 2;
+        }
+
+        // damage
+        x.internal += activity;
+        const ageing = o.rateOfLiving ? activity : 1;
+        const clock = o.rateOfLiving ? x.internal : x.age;
+        const sen = 0.012 * (1 + clock / 25) * ageing;
+        const shelter = mode === M_DORMANT ? 0.5 : 1; // assumption: a dormant body is sheltered (cyst/burrow)
+        const th = 0.12 * p.thermal * (1 - lo[L.tolerance]) * shelter;
+        const pa = 0.08 * x.load * o.infectionSeverity;
+        const di = p.hit * (1 - 0.6 * lo[L.tolerance]) * shelter;
+        x.damage += sen + th + pa + di;
+        x.dmgSrc[0] += sen; x.dmgSrc[1] += th; x.dmgSrc[2] += pa; x.dmgSrc[3] += di;
+        // regeneration: repair keeps original cells; replacement swaps them for blank ones
+        x.damage -= 0.15 * fix + 0.35 * rep * eff;
+        const Oold = x.O;
+        x.O *= 1 - 0.25 * rep * eff;
+        x.P += rep;
+        if (x.damage > 0.4) x.O *= 1 - 0.03 * (x.damage - 0.4); // unrepaired cells die
+        if (x.damage < 0) x.damage = 0;
+        if (o.memory) {
+          x.M *= x.O / Oold;                               // A1: memory goes with its cells
+          x.M *= 1 - 0.03 * o.memoryDecay * (1 - lo[L.memoryUpkeep]);      // upkeep slows decay
+          if (PR) { x.imS *= x.O / Oold; x.imS *= 1 - 0.03 * o.memoryDecay * (1 - lo[L.memoryUpkeep]); if (x.imS > x.O) x.imS = x.O; }
+          if (x.M > x.O) x.M = x.O;
+          if (x.M > x.Mpeak) x.Mpeak = x.M;
+        }
+
+        // mortality
+        const hz = { extrinsic: o.extrinsicMortality, damage: 0.3 * x.damage * x.damage, starvation: 0 };
+        if (x.energy < 0) { ledger.deficit += -x.energy; x.energy = 0; hz.starvation = 0.25; }
+        if (x.energy > x.cap) { ledger.overflow += x.energy - x.cap; x.energy = x.cap; }
+        x.age++;
+        if (mode !== M_DORMANT) x.active++;
+        const hazard = hz.extrinsic + hz.damage + hz.starvation;
+        if (rand() < 1 - Math.exp(-hazard)) {
+          let cause = hz.starvation >= hz.damage && hz.starvation >= hz.extrinsic ? 'starvation' : hz.extrinsic >= hz.damage ? 'extrinsic' : null;
+          if (!cause) { let b = 0; for (let k = 1; k < 5; k++) if (x.dmgSrc[k] > x.dmgSrc[b]) b = k; cause = DAMAGE_SOURCES[b]; }
+          causes[cause]++;
+          ledger.lostAtDeath += x.energy;
+          deaths.push([x.age, x.active, x.internal, x.births, x.O, x.Mpeak > 0 ? x.M / x.Mpeak : null, x.hunts, x.catches, x.imPeak > 0 ? x.imS / x.imPeak : null, x.infections, x.imPeak]);
+          continue;
+        }
+
+        if (mode !== M_DORMANT && mode !== M_TRANSITION && x.age >= MATURITY_AGE && x.energy > OFFSPRING_COST + 0.3 && breedOpen && rand() < 0.7 * (o.fecundityLocked ? FEC0 : lo[L.fecundity]) * o.birthScale) {
+          x.energy -= OFFSPRING_COST; ledger.reproOverhead += OFFSPRING_COST - OFFSPRING_ENERGY;
+          const genome = o.mutation && mutRand() < o.mutationRate ? mutate(x.genome, mutRand, o.maxEdges, o.storageEvolvable ? NT : NL, o.storageEvolvable ? { supply: o.storageSupply, scale: o.storageEffectScale } : null) : x.genome;
+          const patch = rand() < o.migrationRate ? Math.floor(rand() * o.patches) : x.patch;
+          next.push(newborn(genome, patch, OFFSPRING_ENERGY, x.lin)); birthTrace[t]++; x.births++; totalBirths++; parentAgeSum += x.age;
+        }
+        if (rand() < o.migrationRate * 0.25) x.patch = Math.floor(rand() * o.patches);
+        next.push(x);
+      }
+      for (const p of patches) { if (p.famine > 0) p.famine--; if (p.prey < preyFloor) { eco.floorAdded += preyFloor - p.prey; p.prey = preyFloor; } }
+      if (next.length > o.maxPopulation) { capHit = true; while (next.length > o.maxPopulation) { const k = Math.floor(rand() * next.length), v = next[k]; ledger.lostAtDeath += v.energy; causes.capacityCull++; deaths.push([v.age, v.active, v.internal, v.births, v.O, v.Mpeak > 0 ? v.M / v.Mpeak : null, v.hunts, v.catches]); next.splice(k, 1); } }
+      pop = next;
+      popTrace[t] = pop.length;
+      { const pf = patches.reduce((a, p) => a + p.prey / env.prey, 0) / patches.length; eco.sum += pf; eco.n++; if (pf < eco.min) eco.min = pf; if (t <= 400) { eco.earlySum += pf; eco.earlyN++; } }
+      if (LT) { const cnt = new Array(o.lineageCount).fill(0); for (const x of pop) cnt[x.lin]++; for (let k = 0; k < cnt.length; k++) if (cnt[k] === 0 && linExtinctAt[k] === null) linExtinctAt[k] = t; }
+      if (pop.length === 0 && extinctAt === null) extinctAt = t;
+      if (t % o.sampleEvery === 0 || t === o.steps || pop.length === 0) sample(t);
+      pendingDisaster = 0;
+      return true;
+    };
+    if (o.live) {
+      // Live mode: the caller advances the very same loop body step by step. Nothing in the model differs.
+      let tNow = 0, finished = false;
+      const live = {
+        get t() { return tNow; }, get done() { return finished; }, options: o, env,
+        step(n = 1) { for (let i = 0; i < n && !finished; i++) { tNow++; if (!stepOnce(tNow) || tNow >= o.steps || pop.length === 0) finished = true; } return tNow; },
+        setOption(name, value) { o[name] = value; if (name === 'preyHidden') hidStock = value * env.prey; },
+        disaster(strength = 1.2) { pendingDisaster = strength; },
+        stats() {
+          const lin = o.lineageCount; const cnt = new Array(lin).fill(0); for (const x of pop) cnt[x.lin]++;
+          let lifeSum = 0; for (const d of deaths) lifeSum += d[0];
+          return { t: tNow, population: pop.length, lineageAlive: cnt, births: totalBirths, deaths: deaths.length, meanLifespan: deaths.length ? lifeSum / deaths.length : null,
+            genTime: totalBirths ? parentAgeSum / totalBirths : null, catches, huntSteps, causes: { ...causes }, disasters, preyFraction: patches.reduce((a, p) => a + p.prey / env.prey, 0) / patches.length,
+            resource: patches.reduce((a, p) => a + p.resource, 0) / patches.length, extinctAt, capHit,
+            modes: (() => { const m = new Array(NM + 1).fill(0); for (const x of pop) m[x.mode]++; return m; })(),
+            meanEnergy: pop.length ? pop.reduce((a, x) => a + x.energy, 0) / pop.length : 0, meanAge: pop.length ? pop.reduce((a, x) => a + x.age, 0) / pop.length : 0 };
+        },
+        individuals() { return pop.map((x) => ({ id: x.id, lin: x.lin, age: x.age, energy: x.energy, mode: x.mode, patch: x.patch, damage: x.damage, births: x.births, traits: x.ph, genes: x.genome.genes.length })); },
+        traitMeans, result: () => buildResult(),
+      };
+      return live;
+    }
+    for (let t = 1; t <= o.steps; t++) if (!stepOnce(t)) break;
+    return buildResult();
+    function buildResult() {
+    const ran = extinctAt === null ? o.steps : extinctAt;
+    const personSteps = (() => { let s2 = 0; for (let t = 1; t <= ran; t++) s2 += popTrace[t - 1]; return s2; })();
+    const patchSteps = o.patches * ran;
+    const windowRate = (a, b) => { if (b < a) return null; let br = 0, ps = 0; for (let t = a; t <= b; t++) { br += birthTrace[t]; ps += popTrace[t - 1]; } return ps ? br / ps : null; };
+    const trace = Array.from(popTrace.subarray(1, ran + 1)).sort((a, b) => a - b);
+    const alive = pop.reduce((a, x) => a + x.energy, 0);
+    const expected = ledger.start + ledger.intakePlant + ledger.intakePrey - ledger.spent - ledger.reproOverhead - ledger.lostAtDeath - ledger.overflow + ledger.deficit;
+    const col = (k) => deaths.map((d) => d[k]).filter((v) => v !== null);
+    const med = (a) => { if (!a.length) return null; const s = a.slice().sort((x, y) => x - y), h = s.length >> 1; return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2; };
+    const mean = (a) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : null);
+    const maxOf = (a) => (a.length ? a.reduce((m, v) => (v > m ? v : m), -Infinity) : null); // no spread: safe for 10^6 deaths
+    const totalModes = modeSteps.reduce((a, b) => a + b, 0) || 1;
+    const dec = decisions, nd = dec.tp + dec.fp + dec.fn + dec.tn;
+    return {
+      options: { ...o, founderGenomes: o.founderGenomes ? o.founderGenomes.length : null },
+      extinct: pop.length === 0, extinctAt, capHit, disasters, envSignature,
+      lineagePersistence: ran,                      // calendar steps the lineage existed (censored at o.steps)
+      population: { min: trace.length ? trace[0] : 0, median: med(trace), max: trace.length ? trace[trace.length - 1] : 0, final: pop.length },
+      lifespan: { calendarMean: mean(col(0)), calendarMedian: med(col(0)), calendarMax: maxOf(col(0)),
+        activeMean: mean(col(1)), internalMean: mean(col(2)), deathsRecorded: deaths.length },
+      reproduction: { totalBirths, birthsPerDeath: mean(col(3)), maxBirths: maxOf(col(3)), generationTime: totalBirths ? parentAgeSum / totalBirths : null,
+        breedersAmongDead: deaths.length ? deaths.filter((d) => d[3] > 0).length / deaths.length : null,
+        earlyBirthRate400: windowRate(1, Math.min(400, ran)), lateBirthRate: ran > 400 ? windowRate(401, ran) : null },
+      lineages: LT ? (() => { const cnt = new Array(o.lineageCount).fill(0); for (const x of pop) cnt[x.lin]++;
+        const tot = cnt.reduce((a, b) => a + b, 0); return { count: o.lineageCount, alive: cnt, shareAtEnd: cnt.map((c) => (tot ? c / tot : null)),
+          extinctAt: linExtinctAt, survivedHorizon: cnt.map((c) => c > 0) }; })() : null,
+      regimes: { waves, waveInfections: imStats.infectedInWave, reinfectionsSameAntigen: imStats.reinfectionSameAntigen,
+        immuneMemoryPeakAtDeath: mean(col(10)), immuneMemoryRetentionAtDeath: mean(col(8)), waveInfectionsPerDeath: mean(col(9)),
+        infectionDurationMean: imStats.infDurN ? imStats.infDurSum / imStats.infDurN : null, infectionsCleared: imStats.infDurN,
+        exposures: imStats.exposures, exposuresWithMemory: imStats.exposuresWithMemory, exposureWithMemoryFraction: imStats.exposures ? imStats.exposuresWithMemory / imStats.exposures : null,
+        meanProtectionAtMemoryExposure: imStats.exposuresWithMemory ? imStats.protSum / imStats.exposuresWithMemory : null,
+        defencePrevented: imStats.prevented, defenceExpectedPrevented: imStats.expectedPrevented },
+      ecology: { preyFractionMean: eco.n ? eco.sum / eco.n : null, preyFractionMin: eco.n ? eco.min : null, preyFractionEarly: eco.earlyN ? eco.earlySum / eco.earlyN : null,
+        earlyPopulationMax: (() => { let m = 0; for (let t = 1; t <= Math.min(400, ran); t++) if (popTrace[t] > m) m = popTrace[t]; return m; })(),
+        personSteps, birthsPerIndividualStep: personSteps ? totalBirths / personSteps : null, catchesPerIndividualStep: personSteps ? catches / personSteps : null,
+        preyProducedPerPatchStep: patchSteps ? eco.produced / patchSteps / env.prey : null, preyCaughtPerPatchStep: patchSteps ? catches / patchSteps / env.prey : null,
+        preyFloorAddedPerPatchStep: patchSteps ? eco.floorAdded / patchSteps / env.prey : null },
+      deathCauses: causes,
+      energy: { ...ledger, alive, residual: alive - expected, spentBy },
+      predation: { huntSteps, encounters: huntEncounters, catches, successPerHuntStep: huntSteps ? catches / huntSteps : null, successPerEncounter: huntEncounters ? catches / huntEncounters : null },
+      switching: { switches, decisions: dec, huntPrecision: dec.tp + dec.fp ? dec.tp / (dec.tp + dec.fp) : null,
+        huntRecall: dec.tp + dec.fn ? dec.tp / (dec.tp + dec.fn) : null, accuracy: nd ? (dec.tp + dec.tn) / nd : null,
+        sensorFalsePositiveRate: sensing.absent ? sensing.cueWhenAbsent / sensing.absent : null,
+        sensorFalseNegativeRate: sensing.present ? sensing.missWhenPresent / sensing.present : null },
+      modeFractions: Object.fromEntries(MODES.concat(['transition']).map((m, k) => [m, modeSteps[k] / totalModes])),
+      cells: { originalAtDeath: mean(col(4)), memoryRetentionAtDeath: mean(col(5)) },
+      history, finalGenomes: pop.map((x) => x.genome), final: traitMeans(),
+      elapsedMs: Date.now() - t0,
+    };
+    }
+  }
+
+  function assay(genomes, options = {}) {
+    const n = options.founders ?? 100, set = [];
+    for (let i = 0; i < n; i++) set.push(genomes[i % genomes.length]);
+    return simulate({ lineageCount: genomes.length, ...options, founders: n, mutation: false, founderGenomes: set });
+  }
+
+  return { rng, MODES, INPUTS, LOCI, TRAITS, STORAGE_INDEX: NL, DEFAULTS, ENVIRONMENTS, DEV_SIGNALS, REFERENCE_DEV, founderGenome, cloneGenome, mutate, develop, genomeStats, simulate, assay };
+});
