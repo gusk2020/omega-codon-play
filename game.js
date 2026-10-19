@@ -2,6 +2,7 @@
   if (typeof module === 'object' && module.exports) module.exports = factory(); else root.OmegaGame = factory();
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
+  const HIST = (typeof module === 'object' && typeof require === 'function') ? require('./earthhistory') : globalThis.OmegaHistory;
   // The game layer. It owns no science: it picks founders, advances the Stage 1.7 engine, notices notable things, and offers the
   // player a small number of environment-wide interventions. Nothing here favours a lineage or a trait.
   const DETECT_EVERY = 25, FIRST_BRANCH = 300, MIN_BRANCH_GAP = 500, CHECKPOINT_GAP = 1500, SERIES_MAX = 700;
@@ -10,11 +11,11 @@
   const TRAIT_JA = { metabolism: '代謝', movement: '移動', predation: '捕食', tolerance: '耐性', immune: '免疫', fecundity: '繁殖力', repairRate: '修復', dormancyDepth: '休眠の深さ' };
 
   const CREATURES = [
-    { id: 'standard', name: '標準型', color: '#4fa3ff', text: '特徴のない基準の生き物。' },
-    { id: 'lowMetabolism', name: '低代謝型', color: '#46c28a', text: '燃費がよく、ゆっくり老いる。繁殖は控えめ。', traits: { metabolism: 0.5 } },
-    { id: 'highFecundity', name: '多産型', color: '#f2a03d', text: 'たくさん産む。', traits: { fecundity: 0.9 } },
-    { id: 'hunter', name: '狩猟型', color: '#e5586e', text: '獲物を捕るのが上手い。', traits: { predation: 0.8 } },
-    { id: 'tough', name: '頑丈型', color: '#b38cf0', text: '暑さ・寒さ・病気に強い。', traits: { tolerance: 0.8, immune: 0.7 } },
+    { id: 'standard', startRealm: 1, name: '標準型', color: '#4fa3ff', text: '特徴のない基準の生き物。' },
+    { id: 'lowMetabolism', startRealm: 1, name: '低代謝型', color: '#46c28a', text: '燃費がよく、ゆっくり老いる。繁殖は控えめ。', traits: { metabolism: 0.5 } },
+    { id: 'highFecundity', startRealm: 1, name: '多産型', color: '#f2a03d', text: 'たくさん産む。', traits: { fecundity: 0.9 } },
+    { id: 'hunter', startRealm: 1, name: '狩猟型', color: '#e5586e', text: '獲物を捕るのが上手い。', traits: { predation: 0.8 } },
+    { id: 'tough', startRealm: 1, name: '頑丈型', color: '#b38cf0', text: '暑さ・寒さ・病気に強い。', traits: { tolerance: 0.8, immune: 0.7 } },
   ];
   const ENVIRONMENTS = [
     { id: 'steady', engine: 'rich', regime: null, name: '安定した土地', text: '食べ物が毎日ある。遊びやすい。' },
@@ -56,14 +57,16 @@
     const rivalDefs = (cfg.rivals || []).map((id) => CREATURES.find((c) => c.id === id)).filter(Boolean);
     if (!focus.length || focus.length > 3) throw new Error('1〜3種を選んでください');
     if (focus.length + rivalDefs.length > MAX_LINEAGES) throw new Error('系統は合計4つまでです');
+    const realmsOn = cfg.realms === true, scenario = cfg.scenario === 'kpg' ? 'kpg' : 'free';
     const creatures = focus.concat(rivalDefs); // index = lineage id in the engine; the first focus.length are the player's focus lineages
     const roleOf = (i) => (i < focus.length ? 'focus' : 'rival');
     const tag = (i) => (roleOf(i) === 'rival' ? '（競争相手）' : '');
     const environment = cfg.environment || 'steady', envDef = ENVIRONMENTS.find((e) => e.id === environment);
     if (!envDef) throw new Error('unknown environment');
     const live = E.simulate({ seed: cfg.seed, steps: 100000, environment: envDef.engine, resourceRegime: envDef.regime, founders: 100, lineageCount: creatures.length,
-      founderGenomes: creatures.map((c) => makeGenome(E, c)), sampleEvery: 100, live: true });
-    const game = { cfg: { creatures: focus.map((c) => c.id), rivals: rivalDefs.map((c) => c.id), seed: cfg.seed, environment }, creatures, focusCount: focus.length, roleOf, autoContinuous: false, live, events: [], series: [], pending: null, effects: [], log: [], replayTo: null };
+      founderGenomes: creatures.map((c) => makeGenome(E, c)), sampleEvery: 100, live: true,
+      realms: realmsOn ? { startByLineage: creatures.map((c) => c.startRealm) } : null });
+    const game = { cfg: { creatures: focus.map((c) => c.id), rivals: rivalDefs.map((c) => c.id), seed: cfg.seed, environment, realms: realmsOn, scenario }, creatures, focusCount: focus.length, roleOf, autoContinuous: false, live, events: [], series: [], pending: null, effects: [], log: [], replayTo: null };
     const extinctAt = new Array(creatures.length).fill(null);
     const lti = KEY_TRAITS.map((n) => E.TRAITS.findIndex((l) => l[0] === n));
     let replayLog = saved ? saved.log.map((e) => ({ ...e })) : null, replayPtr = 0;
@@ -94,6 +97,13 @@
     const addEvent = (kind, text) => { const st = live.stats(); game.events.push({ t: st.t, gen: Math.round(gen() * 10) / 10, kind, text }); if (game.events.length > 400) game.events.shift(); };
     addEvent('start', `開始：${rivalDefs.length ? '注目系統 ' : ''}${focus.map((c) => c.name).join('・')}${rivalDefs.length ? ` ／ 競争相手 ${rivalDefs.map((c) => c.name).join('・')}` : ''}（各${Math.floor(100 / creatures.length)}体前後）／${ENVIRONMENTS.find((e) => e.id === environment).name}`);
     last.traits = meanTraits();
+    // Scenario: the impact applies EXTERNAL conditions (food, thermal stress) as a function of the step only; it is refreshed on the
+    // fixed 25-step grid so that a replay with different stopping points sees exactly the same conditions. Evolution is not touched.
+    function updateScenario() { if (scenario === 'kpg') live.setEnvMod(HIST.impactConditions(live.t)); }
+    if (scenario === 'kpg') {
+      updateScenario(); live.disaster(HIST.IMPACT.strikeStrength);
+      game.events.push({ t: 0, gen: 0, kind: 'scenario', text: `シナリオ開始：白亜紀末の巨大隕石衝突（${HIST.formatYearsBP(HIST.KPG_AGE_YEARS_BP)}）。衝突直後の食料減少と寒冷化を外部条件として加えます（規模はゲーム上の仮定）。` });
+    }
 
     function record() {
       const st = live.stats();
@@ -172,6 +182,7 @@
     };
     function afterSegment() {
       expire();
+      if (live.t % DETECT_EVERY === 0) updateScenario();
       if (live.t % DETECT_EVERY === 0 || live.done) detect();
       if (replayLog) {
         while (replayPtr < replayLog.length && replayLog[replayPtr].t === live.t) {
@@ -193,7 +204,7 @@
       return live.t;
     };
     Object.defineProperty(game, 't', { get: () => live.t });
-    game.save = () => ({ v: 2, cfg: game.cfg, t: live.t, log: game.log.map((e) => ({ ...e })), autoContinuous: game.autoContinuous });
+    game.save = () => ({ v: 3, cfg: game.cfg, t: live.t, log: game.log.map((e) => ({ ...e })), autoContinuous: game.autoContinuous });
     // Only values the engine actually computes: living counts, their change over about the last 100 steps, extinction time,
     // and the catches recorded on individuals that are still alive. The prey is a shared background resource, not a lineage,
     // so there is no predator-prey relation between lineages to report; the report says so instead of inventing one.
@@ -204,6 +215,12 @@
       return creatures.map((c, i) => ({ lin: i, id: c.id, name: c.name, color: c.color, role: roleOf(i), alive: st.lineageAlive[i], change100: ref ? st.lineageAlive[i] - ref.lin[i] : null,
         extinct: st.lineageAlive[i] === 0, extinctAt: extinctAt[i], catchesOfLiving: catches[i] }));
     };
+    // Realm distribution and movement: counted from the engine's own individuals. Null for saves made before realms existed.
+    game.realmReport = () => {
+      if (!realmsOn) return null; const st = live.stats();
+      return { realms: E.REALM_DEFS.map((r, i) => ({ id: r.id, name: r.name, total: st.realmAlive[i].reduce((a, b) => a + b, 0), byLineage: st.realmAlive[i].slice() })), moves: st.moves.map((r) => r.slice()) };
+    };
+    game.historyInfo = () => (scenario === 'kpg' ? { scenario, ...HIST.clock(live.t), events: HIST.EVENTS } : null);
     game.background = () => { const st = live.stats(); return { preyFraction: st.preyFraction, plantResource: st.resource, computedSpecies: false, computedBackgroundPopulation: false }; };
     game.summary = () => {
       const st = live.stats(), ti = game.timeInfo(), r = [];
@@ -217,5 +234,5 @@
   }
   function newGame(E, cfg) { return createGame(E, { seed: 1, ...cfg }); }
   function loadGame(E, save) { return createGame(E, save.cfg, save); }
-  return { CREATURES, ENVIRONMENTS, OPTIONS, KEY_TRAITS, TRAIT_JA, MAX_LINEAGES, pickRivals, makeGenome, newGame, loadGame, DETECT_EVERY };
+  return { HIST, CREATURES, ENVIRONMENTS, OPTIONS, KEY_TRAITS, TRAIT_JA, MAX_LINEAGES, pickRivals, makeGenome, newGame, loadGame, DETECT_EVERY };
 });

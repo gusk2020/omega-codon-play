@@ -18,7 +18,7 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - run: mkdir _site && cp index.html app.js game.js engine18.js style.css timemodel.js habitat.js _site/
+      - run: mkdir _site && cp index.html app.js game.js engine19.js style.css timemodel.js habitat.js earthhistory.js adaptation.js _site/
       - uses: actions/configure-pages@v5
         with:
           enablement: true

@@ -1,19 +1,20 @@
 'use strict';
 (function () {
-  const E = OmegaEngine18, G = OmegaGame, TM = OmegaTime, H = OmegaHabitat;
+  const E = OmegaEngine19, G = OmegaGame, TM = OmegaTime, H = OmegaHabitat, HS = OmegaHistory, AD = OmegaAdaptation;
   const $ = (id) => document.getElementById(id);
   const SPEEDS = [10, 30, 100, 400]; // steps per second
+  const REALM_COLOR = { water: '#4fa3ff', land: '#46c28a', underground: '#f2a03d', air: '#b38cf0' };
   const KEY = 'omega-codon-saves-v1', SKEY = 'omega-codon-settings-v1';
   const MODE_JA = ['休眠', '待機', '探索', '狩り', '修復', '移行'];
   const CAUSE_JA = { capacityCull: '過密', extrinsic: '事故', starvation: '飢餓', senescence: '老衰', thermal: '寒暖', pathogen: '病気', disaster: '災害', injury: '狩りの傷' };
-  let sel = ['standard'], rivalN = 2, envId = 'steady', game = null, playing = false, speedIdx = 1, tab = 'stat', metric = 'pop', loading = null;
+  let sel = ['standard'], rivalN = 2, scenarioId = 'kpg', envId = 'steady', game = null, playing = false, speedIdx = 1, tab = 'stat', metric = 'pop', loading = null;
   let acc = 0, lastTs = 0, lastDraw = 0, lastAuto = 0, startTraits = null;
   // UI-only settings (never part of the simulation or the save): the time-unit assumption and the habitat map view.
   const settings = (() => { try { return JSON.parse(localStorage.getItem(SKEY)) || {}; } catch (e) { return {}; } })();
   let assume = TM.find(settings.assume).id, hv = H.defaultView();
   (() => { const v = settings.hv; const ok = (r, lg) => Array.isArray(r) && r.length === 2 && r.every(Number.isFinite) && r[1] > r[0] && r[0] >= 0 && !(lg && r[0] <= 0);
     if (v && ok(v.xr, v.xScale === 'log') && ok(v.yr, v.yScale === 'log') && ['linear', 'log'].includes(v.xScale) && ['linear', 'log'].includes(v.yScale) && ['C', 'K'].includes(v.xUnit) && !(v.xScale === 'log' && v.xUnit === 'C')) hv = { ...hv, split: v.split !== false, xUnit: v.xUnit, xScale: v.xScale, yScale: v.yScale, xRev: !!v.xRev, yRev: !!v.yRev, xr: v.xr, yr: v.yr }; })();
-  function saveSettings() { try { localStorage.setItem(SKEY, JSON.stringify({ assume, hv })); } catch (e) { /* storage may be unavailable */ } }
+  function saveSettings() { try { localStorage.setItem(SKEY, JSON.stringify({ assume, hv, ov })); } catch (e) { /* storage may be unavailable */ } }
 
   // ---------- storage ----------
   function readSaves() { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } }
@@ -40,6 +41,8 @@
     for (let n = 0; n <= Math.min(2, maxR); n++) { const b = document.createElement('button'); b.className = 'chip' + (n === rivalN ? ' on' : ''); b.textContent = n === 0 ? 'なし' : n + '種'; b.onclick = () => { rivalN = n; renderStart(); }; $('rivals').appendChild(b); }
     const seedNow = Math.max(1, Math.floor(Number($('seed').value)) || 1), rv = G.pickRivals(seedNow, sel, rivalN);
     $('rival-preview').textContent = rv.length ? '競争相手（乱数の種から自動で決まります）：' + rv.map((id) => G.CREATURES.find((c) => c.id === id).name).join('・') : '競争相手なし：選んだ生き物だけが計算されます。';
+    $('scenarios').innerHTML = '';
+    for (const [id, n] of [['kpg', '白亜紀末の隕石衝突から（約6,600万年前）'], ['free', '自由（衝突なし）']]) { const b = document.createElement('button'); b.className = 'chip' + (id === scenarioId ? ' on' : ''); b.textContent = n; b.onclick = () => { scenarioId = id; renderStart(); }; $('scenarios').appendChild(b); }
     $('envs').innerHTML = '';
     for (const e of G.ENVIRONMENTS) { const b = document.createElement('button'); b.className = 'chip' + (e.id === envId ? ' on' : ''); b.textContent = e.name; b.title = e.text; b.onclick = () => { envId = e.id; renderStart(); }; $('envs').appendChild(b); }
     renderSlots($('slots-start'));
@@ -59,7 +62,7 @@
   $('reseed').onclick = () => { $('seed').value = 1 + Math.floor(Math.random() * 99999); renderStart(); };
   $('seed').oninput = () => renderStart();
   $('seed').value = 1 + Math.floor(Math.random() * 99999);
-  $('go').onclick = () => { const seed = Math.max(1, Math.floor(Number($('seed').value)) || 1); begin(G.newGame(E, { creatures: sel.slice(), rivals: G.pickRivals(seed, sel, rivalN), environment: envId, seed })); };
+  $('go').onclick = () => { const seed = Math.max(1, Math.floor(Number($('seed').value)) || 1); begin(G.newGame(E, { creatures: sel.slice(), rivals: G.pickRivals(seed, sel, rivalN), environment: envId, seed, realms: true, scenario: scenarioId })); };
 
   // ---------- play ----------
   function begin(g) {
@@ -139,12 +142,19 @@
   function fit(c, ctx) { const r = c.getBoundingClientRect(), d = Math.min(2, window.devicePixelRatio || 1); const w = Math.round(r.width * d), h = Math.round(r.height * d); if (c.width !== w || c.height !== h) { c.width = w; c.height = h; } ctx.setTransform(d, 0, 0, d, 0, 0); return [r.width, r.height]; }
   const hash = (n, k) => { const x = Math.sin(n * 12.9898 + k * 78.233) * 43758.5453; return x - Math.floor(x); };
   function drawWorld(st) {
-    const [W, H] = fit(cv, cx), gw = W / 2, gh = H / 2; cx.clearRect(0, 0, W, H);
-    for (let p = 0; p < 4; p++) { const x0 = (p % 2) * gw, y0 = Math.floor(p / 2) * gh; cx.fillStyle = `rgba(70,194,138,${0.04 + 0.2 * st.preyFraction})`; cx.fillRect(x0 + 2, y0 + 2, gw - 4, gh - 4); cx.strokeStyle = '#1f2e3f'; cx.strokeRect(x0 + 2, y0 + 2, gw - 4, gh - 4); }
+    const [W, H2] = fit(cv, cx), gw = W / 2, gh = H2 / 2; cx.clearRect(0, 0, W, H2);
+    const realms = !!game.cfg.realms, rr = realms ? game.realmReport() : null;
+    for (let p = 0; p < 4; p++) {
+      const x0 = (p % 2) * gw, y0 = Math.floor(p / 2) * gh, id = realms ? E.REALM_DEFS[p].id : null, col = id ? REALM_COLOR[id] : '#46c28a';
+      cx.fillStyle = 'rgba(70,194,138,' + (0.04 + 0.12 * st.preyFraction) + ')'; cx.fillRect(x0 + 2, y0 + 2, gw - 4, gh - 4);
+      if (realms) { cx.globalAlpha = 0.07; cx.fillStyle = col; cx.fillRect(x0 + 2, y0 + 2, gw - 4, gh - 4); cx.globalAlpha = 1; }
+      cx.strokeStyle = realms ? col : '#1f2e3f'; cx.globalAlpha = realms ? 0.55 : 1; cx.strokeRect(x0 + 2, y0 + 2, gw - 4, gh - 4); cx.globalAlpha = 1;
+      cx.font = 'bold 12px system-ui'; cx.fillStyle = realms ? col : '#7f93a8'; cx.fillText(realms ? `${E.REALM_DEFS[p].name}  ${rr.realms[p].total}体` : `区画${p + 1}（旧）`, x0 + 8, y0 + 16);
+    }
     const ind = game.live.individuals(), now = performance.now() / 1000, n = Math.min(ind.length, 1200);
     for (let i = 0; i < n; i++) {
       const x = ind[i], x0 = (x.patch % 2) * gw, y0 = Math.floor(x.patch / 2) * gh;
-      const px = x0 + 8 + hash(x.id, 1) * (gw - 16) + Math.sin(now * 1.3 + x.id) * 2, py = y0 + 8 + hash(x.id, 2) * (gh - 16) + Math.cos(now * 1.1 + x.id * 0.7) * 2;
+      const px = x0 + 8 + hash(x.id, 1) * (gw - 16) + Math.sin(now * 1.3 + x.id) * 2, py = y0 + 22 + hash(x.id, 2) * (gh - 30) + Math.cos(now * 1.1 + x.id * 0.7) * 2;
       const r = 2.2 + Math.min(3, x.energy) * 0.9;
       cx.globalAlpha = x.mode === 0 ? 0.3 : 1; cx.fillStyle = game.creatures[x.lin].color; cx.beginPath(); if (game.roleOf(x.lin) === 'rival') cx.rect(px - r, py - r, r * 2, r * 2); else cx.arc(px, py, r, 0, 6.2832); cx.fill();
       if (x.mode === 3) { cx.strokeStyle = '#ff5d73'; cx.lineWidth = 1.5; cx.stroke(); } else if (x.mode === 4) { cx.strokeStyle = '#46c28a'; cx.lineWidth = 1.2; cx.stroke(); }
@@ -158,7 +168,13 @@
   function drawStat(st) {
     const tot = st.modes.reduce((a, b) => a + b, 0) || 1, tc = Object.entries(st.causes).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${CAUSE_JA[k]} ${v}`).join('／') || '-';
     const rep = game.lineageReport(), bg = game.background(), focus = rep.filter((l) => l.role === 'focus'), riv = rep.filter((l) => l.role === 'rival');
-    $('tab-stat').innerHTML = '<div class="grp">注目系統（あなたが選んだ生き物）</div>' + linRows(focus) +
+    const rr = game.realmReport(), hi = game.historyInfo();
+    const realmHtml = rr ? '<div class="grp">4つの領域ごとの分布（実際に計算）</div>' + `<table class="rt"><tr><th></th>${rr.realms.map((r) => `<th style="color:${REALM_COLOR[r.id]}">${r.name}</th>`).join('')}</tr>` +
+      game.creatures.map((c, i) => `<tr><td><i style="color:${c.color}">${game.roleOf(i) === 'rival' ? '■' : '●'}</i> ${c.name}</td>${rr.realms.map((r) => `<td>${r.byLineage[i]}</td>`).join('')}</tr>`).join('') + '</table>' +
+      '<p class="note">領域間の移動（累計）：' + (() => { const f = []; rr.moves.forEach((row, a) => row.forEach((n, b) => { if (n > 0) f.push([n, `${rr.realms[a].name}→${rr.realms[b].name} ${n}`]); })); return f.sort((x, y) => y[0] - x[0]).map((x) => x[1]).join('／') || 'まだなし'; })() + '。移動は探索中の個体が、移動能力・エネルギーの余裕に応じて隣の領域へ移る計算です（移動にはコストがかかり、行き先で生き残れるかは環境次第）。</p>' : '<p class="note">このセーブは領域が導入される前のものです。4つの区画は領域の属性を持たない「旧区画」として動きます（結果は以前と同じ）。</p>';
+    const histHtml = hi ? '<div class="grp">地球史（シナリオ）</div>' + `<p class="note">開始：${HS.formatYearsBP(HS.KPG_AGE_YEARS_BP)}（白亜紀末の衝突）。衝突から約${hi.yearsSinceImpact.toFixed(1)}年（1ステップ=1日の仮定・未校正）。年代の不確かさは前後約${Math.round(hi.yearsBPUncertainty / 1000)}千年。</p>` +
+      hi.events.map((e) => `<div class="ev"><small>${e.status === 'applied' ? '✔ 計算に反映' : '○ 年表のみ（計算には未反映）'}｜約${e.ageMa}百万年前（±${e.uncMa}）｜${e.kind}</small>${e.name}</div>`).join('') : '';
+    $('tab-stat').innerHTML = histHtml + realmHtml + '<div class="grp">注目系統（あなたが選んだ生き物）</div>' + linRows(focus) +
       (riv.length ? '<div class="grp">競争相手（独立に進化を計算）</div>' + linRows(riv) + '<p class="note">競争相手を捕食する関係は計算していません（獲物は全系統に共通の背景資源です）。</p>' : '<div class="grp">競争相手</div><p class="note">なし。選んだ生き物だけが計算されています。</p>') +
       `<div class="grp">背景の生態系（選ばれなかった多数の生き物）</div><p class="note">選ばれなかった生き物は個別には計算せず、植物資源と獲物という背景に簡略化しています。種数や背景の個体数は計算していないので、数字は出しません。</p>` +
       kv([['獲物の残り（容量比）', Math.round(bg.preyFraction * 100) + '%'], ['植物資源（区画平均）', bg.plantResource.toFixed(1)]]) +
@@ -195,7 +211,8 @@
     $('tab-log').innerHTML = game.events.slice().reverse().slice(0, 120).map((e) => `<div class="ev ${e.kind}"><small>${e.t}ステップ／約${e.gen}世代</small>${e.text}</div>`).join('') || '<p class="note">まだ出来事はありません。</p>';
   }
   function drawTimeline(ti) {
-    const a = TM.find(assume);
+    const a = TM.find(assume), hi = game.historyInfo();
+    if (hi) { $('timeline').innerHTML = `経過 <b>${ti.steps}ステップ ≈ 衝突から${TM.formatDays(ti.steps)}</b>（仮定：1ステップ=1日・未校正）<br>地球史：<b>${HS.formatYearsBP(HS.KPG_AGE_YEARS_BP)}</b>（K–Pg境界）＋ 約${hi.yearsSinceImpact.toFixed(1)}年　参考（世代×平均寿命）≈ ${Math.round(ti.lifespanReferenceSteps)}ステップ分　<a href="#" id="why-time" style="color:var(--accent)">これは何？</a>`; const w0 = $('why-time'); if (w0) w0.onclick = (e) => { e.preventDefault(); openTimeInfo(); }; return; }
     $('timeline').innerHTML = `経過 <b>${ti.steps}ステップ ≈ ${TM.format(ti.steps, assume)}</b>（仮定：${a.name}）<br>参考：世代×その時点の平均寿命 ≈ <b>${Math.round(ti.lifespanReferenceSteps)}ステップ分 ≈ ${TM.format(ti.lifespanReferenceSteps, assume)}</b>　<a href="#" id="why-time" style="color:var(--accent)">これは何？</a>`;
     const w = $('why-time'); if (w) w.onclick = (e) => { e.preventDefault(); openTimeInfo(); };
   }
@@ -203,14 +220,15 @@
     const ti = game.timeInfo(), card = $('modal-card'), p = playing; playing = false; setPP();
     card.innerHTML = `<h3>時間の表示について</h3><div class="assume">この時間は<b>仮定</b>です。エンジンが数えているのは「ステップ」だけで、日・年への換算は<b>校正されていません</b>。下で選ぶ換算は、見やすくするための仮の目盛りです。</div>
       <p class="note">・経過：ステップ数に、選んだ仮定（${TM.find(assume).name}）を掛けた値。<br>・推定世代：各区間の平均世代時間（親が子を産んだときの年齢の平均）で、経過ステップを割って足し合わせた値。寿命が変わっても減りません。<br>・参考（世代×平均寿命）：各区間の世代の増分に、その区間の平均寿命を掛けて足した値。真の経過時間ではなく、世代と寿命の関係を見るための参考値です。<br>・現在の区間：世代時間 ${ti.windowGenerationTime ? ti.windowGenerationTime.toFixed(1) : '-'} ステップ／平均寿命 ${ti.windowLifespan ? ti.windowLifespan.toFixed(1) : '-'} ステップ。<br>・将来の長期設定では、開始は約6,600万年前の想定です。いまのステップとの対応は未校正で、この画面の値は6,600万年前からの経過年ではありません。</p>
-      <select id="assume-sel">${TM.ASSUMPTIONS.map((a) => `<option value="${a.id}"${a.id === assume ? ' selected' : ''}>${a.name}（仮定）</option>`).join('')}</select>`;
-    const b = document.createElement('button'); b.className = 'btn primary big'; b.textContent = '閉じる'; b.onclick = () => { assume = $('assume-sel').value; saveSettings(); $('modal').hidden = true; if (p && !game.pending && !game.live.done) { playing = true; setPP(); } draw(true); }; card.appendChild(b);
+      ${game.historyInfo() ? (() => { const sc = HS.scaleCheck(ti.windowLifespan || 0, ti.windowGenerationTime || 0); return `<div class="assume"><b>地球史モードの時間尺度（仮定）：</b>1ステップ=1日に固定されています。いまの区間では、平均寿命は約${Math.round(sc.lifespanDays)}日、世代時間は約${Math.round(sc.generationDays)}日に相当します。${sc.note}<br>6,600万年を1ステップずつ進めることは想定していません。時代を飛び越す粗い時間尺度は未実装です。</div>`; })() : ''}
+      <select id="assume-sel"${game.historyInfo() ? ' disabled' : ''}>${TM.ASSUMPTIONS.map((a) => `<option value="${a.id}"${a.id === assume ? ' selected' : ''}>${a.name}（仮定）</option>`).join('')}</select>`;
+    const b = document.createElement('button'); b.className = 'btn primary big'; b.textContent = '閉じる'; b.onclick = () => { if (!game.historyInfo()) assume = $('assume-sel').value; saveSettings(); $('modal').hidden = true; if (p && !game.pending && !game.live.done) { playing = true; setPP(); } draw(true); }; card.appendChild(b);
     $('modal').hidden = false;
   }
 
   // ---------- habitat map (tab 環境) ----------
   const hc = $('habitat'), hx = hc.getContext('2d');
-  let hRects = [];
+  let hRects = [], ov = ['none', 'lineage', 'individual'].includes(settings.ov) ? settings.ov : 'none', selInd = null, lastEnvT = -1;
   function drawHabitat() {
     const [W, Hh] = fit(hc, hx); hx.clearRect(0, 0, W, Hh); hRects = [];
     const realms = hv.split ? H.REALMS.map((r) => [r]) : [H.REALMS], gap = 6, cols = hv.split ? 2 : 1, rows = hv.split ? 2 : 1, pw = (W - gap * (cols - 1)) / cols, ph = (Hh - gap * (rows - 1)) / rows;
@@ -229,6 +247,7 @@
         hx.globalAlpha = 0.2; hx.fillStyle = r.color; hx.fillRect(px0 + rx, py0 + ry, rw, rh); hx.globalAlpha = 1; hx.strokeStyle = r.color; hx.lineWidth = 1.5; hx.strokeRect(px0 + rx, py0 + ry, rw, rh);
         hx.fillStyle = r.color; hx.font = 'bold ' + (small ? 10 : 12) + 'px system-ui'; hx.fillText(r.name, px0 + Math.max(rx, 0) + 4, py0 + Math.max(ry, 0) + (small ? 11 : 14) + (small ? 0 : H.REALMS.indexOf(r) * 14));
       }
+      if (ov !== 'none') drawOverlay(px0, py0, X, Y, small);
       const rx = X(H.REFERENCE.T), ry = Y(H.REFERENCE.P);
       hx.setLineDash([4, 3]); hx.strokeStyle = '#ffffff'; hx.globalAlpha = 0.75; hx.lineWidth = 1;
       if (rx !== null) { hx.beginPath(); hx.moveTo(px0 + rx, py0); hx.lineTo(px0 + rx, py0 + h); hx.stroke(); }
@@ -245,7 +264,37 @@
       if (small) { hx.fillStyle = rl[0].color; hx.font = 'bold 10px system-ui'; hx.fillText(rl[0].name, px0, oy + 11); }
     });
   }
+  // Overlay of adaptation ranges. The provider is a PLACEHOLDER (adaptation.js): not linked to genomes or to the simulation.
+  function rangeBox(rg, X, Y) { const x1 = X(rg.T[0]), x2 = X(rg.T[1]), y1 = Y(rg.P[0]), y2 = Y(rg.P[1]); if ([x1, x2, y1, y2].some((v) => v === null)) return null; return { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) }; }
+  function drawOverlay(px0, py0, X, Y, small) {
+    const seed = game.cfg.seed, step = game.t, P = AD.provider;
+    const one = (r, color, widthA, label) => {
+      const a = rangeBox(r.active, X, Y), d = rangeBox(r.dormant, X, Y);
+      if (d) { hx.setLineDash([5, 3]); hx.strokeStyle = color; hx.lineWidth = 1; hx.globalAlpha = 0.8; hx.strokeRect(px0 + d.x, py0 + d.y, d.w, d.h); hx.setLineDash([]); hx.globalAlpha = 1; }
+      if (a) { hx.globalAlpha = 0.12; hx.fillStyle = color; hx.fillRect(px0 + a.x, py0 + a.y, a.w, a.h); hx.globalAlpha = 1; hx.strokeStyle = color; hx.lineWidth = widthA; hx.strokeRect(px0 + a.x, py0 + a.y, a.w, a.h); if (label && !small) { hx.fillStyle = color; hx.font = '10px system-ui'; hx.fillText(label, px0 + a.x + 3, py0 + a.y + a.h - 4); } }
+    };
+    if (ov === 'lineage') game.creatures.forEach((c, i) => one(P.lineageRange(i, seed, step), c.color, game.roleOf(i) === 'focus' ? 2.2 : 1.2, c.name + (game.roleOf(i) === 'rival' ? '（相手）' : '')));
+    else if (ov === 'individual') {
+      const ind = currentInd(); if (!ind) return; const c = game.creatures[ind.lin];
+      one(P.individualRange(ind.id, ind.lin, seed, step), c.color, 2.4, `#${ind.id}`);
+      if (game.cfg.realms) { const rl = H.REALMS[ind.patch], ctr = AD.realmCentre(rl), mx = X(ctr.T), my = Y(ctr.P); if (mx !== null && my !== null) { hx.fillStyle = '#fff'; hx.strokeStyle = c.color; hx.lineWidth = 2; hx.beginPath(); hx.arc(px0 + mx, py0 + my, 4.5, 0, 6.2832); hx.fill(); hx.stroke(); if (!small) { hx.fillStyle = '#fff'; hx.font = '10px system-ui'; hx.fillText(`現在: ${rl.name}（領域の仮定値）`, px0 + Math.min(mx + 7, 120), py0 + Math.max(my - 6, 12)); } } }
+    }
+    hx.fillStyle = '#f2a03d'; hx.font = 'bold 10px system-ui'; hx.fillText('ダミー表示', px0 + 4, py0 + (small ? 22 : 12) + (small ? 0 : 0));
+  }
+  function currentInd() { const list = game.live.individuals(); if (!list.length) return null; return list.find((x) => x.id === selInd) || list.find((x) => game.roleOf(x.lin) === 'focus') || list[0]; }
+  function renderOverlayControls() {
+    const m = $('ov-modes'); m.innerHTML = '<span class="note">生命の重ね描き：</span>';
+    for (const [id, n] of [['none', 'なし'], ['lineage', '系統'], ['individual', '個体']]) { const b = document.createElement('button'); b.className = 'chip' + (ov === id ? ' on' : ''); b.textContent = n; b.onclick = () => { ov = id; saveSettings(); renderOverlayControls(); drawHabitat(); }; m.appendChild(b); }
+    const d = $('ov-detail'); d.innerHTML = '';
+    if (ov === 'individual') {
+      const list = game.live.individuals().slice().sort((a, b) => a.lin - b.lin || a.id - b.id).slice(0, 60), cur = currentInd(); selInd = cur ? cur.id : null;
+      const sel = document.createElement('select'); sel.innerHTML = list.map((x) => `<option value="${x.id}"${cur && x.id === cur.id ? ' selected' : ''}>#${x.id} ${game.creatures[x.lin].name}${game.cfg.realms ? '／' + E.REALM_DEFS[x.patch].name : ''}／年齢${x.age}</option>`).join('');
+      sel.onchange = () => { selInd = Number(sel.value); drawHabitat(); }; d.appendChild(sel);
+    }
+    d.insertAdjacentHTML('beforeend', ov === 'none' ? '' : `<div class="ovbadge">⚠ ${AD.provider.label}。範囲は乱数の種と時刻だけから決まる仮の動きで、ゲノムや生存・進化の計算とは無関係です。実線＝活動可能／破線＝休眠すれば生存可能／それ以外＝生存不能（いずれもダミー）。${ov === 'individual' ? '白い点は、その個体がいる領域の表示用の代表値です。' : ''}</div>`);
+  }
   function renderEnvControls() {
+    renderOverlayControls();
     const modes = $('env-modes'); modes.innerHTML = '';
     for (const [sp, n] of [[true, '4分割'], [false, '統合']]) { const b = document.createElement('button'); b.className = 'chip' + (hv.split === sp ? ' on' : ''); b.textContent = n; b.onclick = () => { hv = { ...hv, split: sp }; saveSettings(); renderEnvControls(); drawHabitat(); }; modes.appendChild(b); }
     const t = $('env-tools'); t.innerHTML = '';
@@ -265,7 +314,7 @@
     const st = game.live.stats(), tol = game.series.length ? game.series[game.series.length - 1].traits[3] : null;
     $('env-note').innerHTML = `<div class="assume"><b>この四角は「表示用の仮定」です。</b>現在の地球の概数を置いたもので、エンジンの値ではありません。白い点線と「基準」は、地球地表の全球平均気温15℃（288.15 K）と1気圧（101325 Pa）。地図の上をなぞると移動、2本指（またはホイール）で拡大できます。</div>
       <p class="note"><b>実際に計算している値：</b>熱ストレス指標 ${st.thermal.toFixed(2)}（0〜1の無次元量で、温度ではありません）／集団の耐性の平均 ${tol === null ? '-' : tol.toFixed(2)}。</p>
-      <p class="note"><b>まだ計算していないもの：</b>温度・圧力・酸素・水分・重力、領域ごとの個体数、領域間の移動。領域の移動は将来、進化した形質で可能にする予定で、種分化・交雑も後のステージで実装します（いまは未実装です）。</p>`;
+      <p class="note"><b>計算しているもの：</b>4つの領域ごとの個体数と領域間の移動（状況タブ）。領域は食料・獲物・熱ストレス・病気の強さが違うゲーム上の設定です。<br><b>まだ計算していないもの：</b>温度・圧力・酸素・水分・重力そのもの、生き物ごとの適応範囲（重ね描きはダミー）、水中↔空中のような離れた領域への直接移動。種分化・交雑は後のステージで実装します（いまは未実装です）。</p>`;
   }
   // pan / zoom on the map
   const pts = new Map(); let pinch = null;
@@ -294,7 +343,7 @@
     if (!game) return; const st = game.live.stats();
     const ti = game.timeInfo(); $('h-t').textContent = st.t; $('h-gen').textContent = ti.generations.toFixed(1); $('h-pop').textContent = st.population; drawTimeline(ti);
     drawWorld(st);
-    if (tab === 'stat') drawStat(st); else if (tab === 'trait' && (force || st.t % 25 === 0)) drawTrait(); else if (tab === 'graph' && (force || st.t % 25 === 0)) drawChart(); else if (tab === 'env') { if (force || !envShown) { renderEnvControls(); drawHabitat(); drawEnvNote(); envShown = true; } else if (st.t % 25 === 0) drawEnvNote(); } else if (tab === 'log' && (force || logN !== game.events.length)) { drawLog(); logN = game.events.length; }
+    if (tab === 'stat') drawStat(st); else if (tab === 'trait' && (force || st.t % 25 === 0)) drawTrait(); else if (tab === 'graph' && (force || st.t % 25 === 0)) drawChart(); else if (tab === 'env') { if (force || !envShown) { renderEnvControls(); drawHabitat(); drawEnvNote(); envShown = true; lastEnvT = st.t; } else if (st.t - lastEnvT >= 25) { drawEnvNote(); if (ov !== 'none') drawHabitat(); lastEnvT = st.t; } } else if (tab === 'log' && (force || logN !== game.events.length)) { drawLog(); logN = game.events.length; }
   }
 
   document.addEventListener('visibilitychange', () => { if (document.hidden && game) { putSave('auto'); } });

@@ -16,9 +16,12 @@
   <h2>2. 競争相手の数</h2>
   <div id="rivals" class="chips"></div>
   <p id="rival-preview" class="note"></p>
-  <h2>3. 土地</h2>
+  <h2>3. 開始の時代</h2>
+  <div id="scenarios" class="chips"></div>
+  <p class="note">衝突直後の食料減少と寒冷化は外部条件として加わりますが、何が生き残るかは固定しません。</p>
+  <h2>4. 土地</h2>
   <div id="envs" class="chips"></div>
-  <h2>4. 乱数の種</h2>
+  <h2>5. 乱数の種</h2>
   <div class="row"><input id="seed" type="number" inputmode="numeric" min="1" value="1"><button id="reseed" class="btn small">ランダム</button></div>
   <button id="go" class="btn primary big">進化を始める</button>
   <h2>セーブデータ</h2>
@@ -48,6 +51,8 @@
   <section id="tab-graph" hidden><canvas id="chart" width="360" height="200"></canvas><div id="chart-note" class="note"></div></section>
   <section id="tab-env" hidden>
     <div class="chips" id="env-modes"></div>
+    <div class="chips" id="ov-modes"></div>
+    <div id="ov-detail"></div>
     <canvas id="habitat" width="360" height="360"></canvas>
     <div class="envtools" id="env-tools"></div>
     <div id="env-note" class="note"></div>
@@ -57,7 +62,9 @@
 
 <div id="modal" hidden><div class="card" id="modal-card"></div></div>
 <div id="toast" hidden></div>
-<script src="engine18.js"></script>
+<script src="engine19.js"></script>
+<script src="earthhistory.js"></script>
+<script src="adaptation.js"></script>
 <script src="timemodel.js"></script>
 <script src="habitat.js"></script>
 <script src="game.js"></script>

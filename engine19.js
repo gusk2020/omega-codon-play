@@ -113,7 +113,7 @@
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
-  root.OmegaEngine18 = api;
+  root.OmegaEngine19 = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
@@ -160,7 +160,22 @@
     storageEvolvable: false, storageCost: 0, memoryBenefit: true, lineageCount: 1,
     storageSupply: 1, storageEffectScale: 1, infection: null, infectionSeverity: 1, preyRefuge: 0, preyScale: 1, fecundityLocked: false,
     birthScale: 1, captureScale: 1, preyGrowthScale: 1, preyHidden: 0, preyInflow: 0, live: false,
+    realms: null, // null = the original undivided patches (bit-identical to Stage 1.7); true or {…} = the four habitat realms below
   };
+  // Habitat realms (Stage 1.9B). A realm is a patch with a name and a minimal set of attributes. THESE NUMBERS ARE GAME SETTINGS, NOT
+  // MEASUREMENTS: they only make the four realms different enough to matter (food, prey capacity, thermal stress, disease pressure),
+  // relative to the chosen base environment. Movement between realms is an individual act that costs energy, needs a minimum reserve,
+  // depends on the movement trait, and is only possible between adjacent realms; whether the arrival survives is decided by the
+  // existing thermal / starvation / disease mechanics, not by a rule here.
+  const REALM_DEFS = [
+    { id: 'water', name: '水中', resource: 1.0, prey: 1.0, thermal: -0.05, pathogen: 1.0 },
+    { id: 'land', name: '地上', resource: 1.0, prey: 1.0, thermal: 0.05, pathogen: 1.0 },
+    { id: 'underground', name: '地中', resource: 0.45, prey: 0.5, thermal: -0.1, pathogen: 0.6 },
+    { id: 'air', name: '空中', resource: 0.25, prey: 0.4, thermal: 0.15, pathogen: 0.3 },
+  ];
+  const REALM_ADJ = [[1, 2], [0, 2, 3], [0, 1], [1]]; // water-land, water-underground, land-underground, land-air
+  const REALM_DIFF = [[0, 1.0, 1.5, 0], [1.0, 0, 1.0, 1.5], [1.5, 1.0, 0, 0], [0, 1.5, 0, 0]]; // relative crossing difficulty
+  const REALM_MOVE = { rate: 0.05, cost: 0.04, reserve: 0.3, start: [1], startByLineage: null };
 
   // resource: plant food per patch per step; prey: prey carrying capacity per
   // patch; injury: damage multiplier while hunting.
@@ -366,6 +381,8 @@
     o.steps = clamp(Math.floor(o.steps), 0, 100000);
     o.founders = clamp(Math.floor(o.founders), 0, o.maxPopulation);
     o.patches = clamp(Math.floor(o.patches), 1, 32);
+    const RM = o.realms ? { ...REALM_MOVE, ...(o.realms === true ? {} : o.realms) } : null;
+    if (RM) o.patches = REALM_DEFS.length;
     const t0 = Date.now();
     // Three independent streams: the environment's history is identical for
     // every condition run with the same seed (paired design), and mutation
@@ -374,9 +391,10 @@
 
     const founder = founderGenome();
     const patches = [];
-    for (let p = 0; p < o.patches; p++) patches.push({ resource: env.resource, thermal: env.thermal, pathogen: env.pathogen,
-      target: { resource: env.resource, thermal: env.thermal, pathogen: env.pathogen }, prey: env.prey,
-      famine: 0, hit: 0, count: 0, infected: 0, demand: 0, eaten: 0 });
+    for (let p = 0; p < o.patches; p++) { const def = RM ? REALM_DEFS[p] : null, preyCap = def ? env.prey * def.prey : env.prey; const rr = def ? env.resource * def.resource : env.resource, tt = def ? clamp(env.thermal + def.thermal, 0, 1) : env.thermal, pp = def ? clamp(env.pathogen * def.pathogen, 0, 0.6) : env.pathogen;
+      patches.push({ resource: rr, thermal: tt, pathogen: pp, rMult: def ? def.resource : 1, tOff: def ? def.thermal : 0, pMult: def ? def.pathogen : 1, preyCap, hid: o.preyHidden * preyCap,
+      target: { resource: rr, thermal: tt, pathogen: pp }, prey: preyCap,
+      famine: 0, hit: 0, count: 0, infected: 0, demand: 0, eaten: 0 }); }
 
     let nextId = 1;
     const refKey = o.regulation ? '_refOn' : '_refOff';
@@ -390,14 +408,16 @@
       dmgSrc: [0, 0, 0, 0, 0], hunts: 0, catches: 0, present: false, strain: -1, imA: -1, imS: 0, imPeak: 0, infections: 0, reinfections: 0, acclimCost: 0, infLeft: 0, infAge: 0 });
     const birth = (x) => { developInto(x, devSignals(patches[x.patch], 0)); return x; };
     let pop = [];
-    for (let i = 0; i < o.founders; i++) pop.push(newborn(cloneGenome(o.founderGenomes ? o.founderGenomes[i % o.founderGenomes.length] : founder), i % o.patches, 1.0, i % o.lineageCount));
+    for (let i = 0; i < o.founders; i++) pop.push(newborn(cloneGenome(o.founderGenomes ? o.founderGenomes[i % o.founderGenomes.length] : founder), RM ? (RM.startByLineage ? RM.startByLineage[i % o.lineageCount] : RM.start[i % RM.start.length]) : i % o.patches, 1.0, i % o.lineageCount));
 
     // Energy ledger: sum(alive energy) == start + intake - spent - reproOverhead - lostAtDeath - overflow + deficit.
     const ledger = { start: pop.reduce((a, x) => a + x.energy, 0), intakePlant: 0, intakePrey: 0, spent: 0, reproOverhead: 0, lostAtDeath: 0, overflow: 0, deficit: 0 };
     const spentBy = { base: 0, memory: 0, regeneration: 0, switching: 0, hunting: 0, acclimation: 0, storage: 0 };
     // regime state (driven only by envRand, so paired seeds share it)
     const memOn = o.memory && o.memoryBenefit;
-    const IFR = o.infection, FEC0 = LOCI[L.fecundity][3], preyFloor = o.preyRefuge * env.prey; let hidStock = o.preyHidden * env.prey; let pendingDisaster = 0; let lifeSumRun = 0;
+    const IFR = o.infection, FEC0 = LOCI[L.fecundity][3]; let pendingDisaster = 0; let lifeSumRun = 0;
+    const envMod = { resource: 1, thermal: 0, pathogen: 1 }; // external conditions set by a scenario (live mode); neutral by default
+    const moves = RM ? REALM_DEFS.map(() => REALM_DEFS.map(() => 0)) : null;
     const PR = o.pathogenRegime, BR = o.breedingRegime, RR = o.resourceRegime, TR = o.thermalRegime;
     let waveStrain = -1, waveOn = false, waves = 0, breedOpen = true, breedLeft = 0, pulse = 1, parentAgeSum = 0;
     const SIM = [1, 0.6, 0.25];
@@ -445,15 +465,15 @@
       if (BR) { if (breedLeft > 0) breedLeft--; else if (envRand() < BR.openProb) breedLeft = BR.windowLength; breedOpen = breedLeft > 0; }
       if (RR) pulse = (t % RR.period) < RR.pulseLength ? RR.period / RR.pulseLength : 0;
       for (const p of patches) {
-        if (o.variable && envRand() < 0.01) p.target = { resource: env.resource * (0.5 + envRand()), thermal: clamp(env.thermal + (envRand() - 0.5) * 0.6, 0, 1), pathogen: clamp(env.pathogen * (0.4 + envRand() * 1.8), 0, 0.6) };
-        p.resource += (p.target.resource - p.resource) * 0.05;
-        p.thermal += (p.target.thermal - p.thermal) * 0.05;
-        p.pathogen += (p.target.pathogen - p.pathogen) * 0.05;
+        if (o.variable && envRand() < 0.01) p.target = { resource: env.resource * p.rMult * (0.5 + envRand()), thermal: clamp(env.thermal + p.tOff + (envRand() - 0.5) * 0.6, 0, 1), pathogen: clamp(env.pathogen * p.pMult * (0.4 + envRand() * 1.8), 0, 0.6) };
+        p.resource += (p.target.resource * envMod.resource - p.resource) * 0.05;
+        p.thermal += (Math.min(1, p.target.thermal + envMod.thermal) - p.thermal) * 0.05;
+        p.pathogen += (p.target.pathogen * envMod.pathogen - p.pathogen) * 0.05;
         if (TR) p.thermal = TR.mode === 'periodic' ? TR.mean + TR.amp * Math.sin(6.283185307 * t / TR.period) : TR.mean + TR.amp * Math.sin(6.283185307 * envRand());
         p.hit = 0;
         if (envRand() < env.disasterRate) { p.hit = 0.6 + envRand() * 0.9; p.famine = 15; disasters++; envSignature = (envSignature * 31 + t) % 1000000007; }
         if (pendingDisaster) { p.hit = Math.max(p.hit, pendingDisaster); p.famine = 15; } // player-triggered (live mode only); draws no random numbers
-        { const grow = 0.3 * o.preyGrowthScale * p.prey * (1 - p.prey / env.prey) + 0.002 * env.prey + o.preyInflow * env.prey; p.prey += grow; if (grow > 0) eco.produced += grow; } // logistic growth + trickle immigration + optional inflow
+        { const grow = 0.3 * o.preyGrowthScale * p.prey * (1 - p.prey / p.preyCap) + 0.002 * p.preyCap + o.preyInflow * p.preyCap; p.prey += grow; if (grow > 0) eco.produced += grow; } // logistic growth + trickle immigration + optional inflow
         p.count = 0; p.infected = 0; p.demand = 0; p.eaten = 0;
       }
       for (const x of pop) { const p = patches[x.patch]; p.count++; if (x.load > 0) p.infected++; }
@@ -469,7 +489,7 @@
         const memF = memOn ? x.M : 0;
         // An encounter persists until the prey is caught or slips away, so a hunt
         // started on a cue can still find it after the switching delay.
-        x.present = (x.present && rand() < 0.7) || rand() < 0.5 * Math.min(1, Math.max(0, p.prey - hidStock) / env.prey);
+        x.present = (x.present && rand() < 0.7) || rand() < 0.5 * Math.min(1, Math.max(0, p.prey - p.hid) / p.preyCap);
         const fpE = lo[L.falsePositive] * (1 - 0.6 * memF), fnE = lo[L.falseNegative] * (1 - 0.6 * memF);
         x.cue = x.present ? rand() >= fnE : rand() < fpE;
         if (x.present) { sensing.present++; if (!x.cue) sensing.missWhenPresent++; } else { sensing.absent++; if (x.cue) sensing.cueWhenAbsent++; }
@@ -521,8 +541,8 @@
         if (mode === M_HUNT) {
           huntSteps++; x.hunts++; huntCost = 0.05 * metab;
           // hunting is an active search, not only a reaction to a cue
-          if (!x.present) x.present = rand() < 0.6 * Math.min(1, Math.max(0, p.prey - hidStock) / env.prey) * (0.4 + 0.6 * lo[L.movement]);
-          if (x.present && p.prey - hidStock >= 1) {
+          if (!x.present) x.present = rand() < 0.6 * Math.min(1, Math.max(0, p.prey - p.hid) / p.preyCap) * (0.4 + 0.6 * lo[L.movement]);
+          if (x.present && p.prey - p.hid >= 1) {
             huntEncounters++;
             const memF = memOn ? x.M : 0;
             const pc = clamp(1.5 * lo[L.predation] * (0.4 + 0.6 * Math.min(1.2, metab)) * (1 + 0.8 * memF) * o.captureScale, 0, 0.95);
@@ -629,17 +649,23 @@
         if (mode !== M_DORMANT && mode !== M_TRANSITION && x.age >= MATURITY_AGE && x.energy > OFFSPRING_COST + 0.3 && breedOpen && rand() < 0.7 * (o.fecundityLocked ? FEC0 : lo[L.fecundity]) * o.birthScale) {
           x.energy -= OFFSPRING_COST; ledger.reproOverhead += OFFSPRING_COST - OFFSPRING_ENERGY;
           const genome = o.mutation && mutRand() < o.mutationRate ? mutate(x.genome, mutRand, o.maxEdges, o.storageEvolvable ? NT : NL, o.storageEvolvable ? { supply: o.storageSupply, scale: o.storageEffectScale } : null) : x.genome;
-          const patch = rand() < o.migrationRate ? Math.floor(rand() * o.patches) : x.patch;
+          const patch = RM ? x.patch : rand() < o.migrationRate ? Math.floor(rand() * o.patches) : x.patch;
           next.push(newborn(genome, patch, OFFSPRING_ENERGY, x.lin)); birthTrace[t]++; x.births++; totalBirths++; parentAgeSum += x.age;
         }
-        if (rand() < o.migrationRate * 0.25) x.patch = Math.floor(rand() * o.patches);
+        if (RM) {
+          // Realm movement: only while exploring, only with a reserve, success odds scale with the movement trait, adjacent realms only.
+          if (mode === M_EXPLORE && x.energy > RM.reserve && rand() < RM.rate * lo[L.movement]) {
+            const adj = REALM_ADJ[x.patch], dest = adj[Math.floor(rand() * adj.length)], cost = RM.cost * REALM_DIFF[x.patch][dest];
+            if (x.energy >= cost + RM.reserve) { x.energy -= cost; ledger.spent += cost; spentBy.moving = (spentBy.moving || 0) + cost; moves[x.patch][dest]++; x.patch = dest; }
+          }
+        } else if (rand() < o.migrationRate * 0.25) x.patch = Math.floor(rand() * o.patches);
         next.push(x);
       }
-      for (const p of patches) { if (p.famine > 0) p.famine--; if (p.prey < preyFloor) { eco.floorAdded += preyFloor - p.prey; p.prey = preyFloor; } }
+      for (const p of patches) { if (p.famine > 0) p.famine--; { const preyFloor = o.preyRefuge * p.preyCap; if (p.prey < preyFloor) { eco.floorAdded += preyFloor - p.prey; p.prey = preyFloor; } } }
       if (next.length > o.maxPopulation) { capHit = true; while (next.length > o.maxPopulation) { const k = Math.floor(rand() * next.length), v = next[k]; ledger.lostAtDeath += v.energy; causes.capacityCull++; deaths.push([v.age, v.active, v.internal, v.births, v.O, v.Mpeak > 0 ? v.M / v.Mpeak : null, v.hunts, v.catches]); next.splice(k, 1); } }
       pop = next;
       popTrace[t] = pop.length;
-      { const pf = patches.reduce((a, p) => a + p.prey / env.prey, 0) / patches.length; eco.sum += pf; eco.n++; if (pf < eco.min) eco.min = pf; if (t <= 400) { eco.earlySum += pf; eco.earlyN++; } }
+      { const pf = patches.reduce((a, p) => a + p.prey / p.preyCap, 0) / patches.length; eco.sum += pf; eco.n++; if (pf < eco.min) eco.min = pf; if (t <= 400) { eco.earlySum += pf; eco.earlyN++; } }
       if (LT) { const cnt = new Array(o.lineageCount).fill(0); for (const x of pop) cnt[x.lin]++; for (let k = 0; k < cnt.length; k++) if (cnt[k] === 0 && linExtinctAt[k] === null) linExtinctAt[k] = t; }
       if (pop.length === 0 && extinctAt === null) extinctAt = t;
       if (t % o.sampleEvery === 0 || t === o.steps || pop.length === 0) sample(t);
@@ -652,12 +678,15 @@
       const live = {
         get t() { return tNow; }, get done() { return finished; }, options: o, env,
         step(n = 1) { for (let i = 0; i < n && !finished; i++) { tNow++; if (!stepOnce(tNow) || tNow >= o.steps || pop.length === 0) finished = true; } return tNow; },
-        setOption(name, value) { o[name] = value; if (name === 'preyHidden') hidStock = value * env.prey; },
+        setOption(name, value) { o[name] = value; if (name === 'preyHidden') for (const p of patches) p.hid = value * p.preyCap; },
         disaster(strength = 1.2) { pendingDisaster = strength; },
+        patchState() { return patches.map((p) => ({ resource: p.resource, thermal: p.thermal, pathogen: p.pathogen, prey: p.prey, preyCap: p.preyCap })); },
+        setEnvMod(m) { envMod.resource = m.resource ?? 1; envMod.thermal = m.thermal ?? 0; envMod.pathogen = m.pathogen ?? 1; },
         stats() {
           const lin = o.lineageCount; const cnt = new Array(lin).fill(0); for (const x of pop) cnt[x.lin]++;
           const lifeSum = lifeSumRun;
           return { t: tNow, population: pop.length, lineageAlive: cnt, births: totalBirths, deaths: deaths.length, meanLifespan: deaths.length ? lifeSum / deaths.length : null,
+            realmAlive: (() => { const m = REALM_DEFS.map(() => new Array(o.lineageCount).fill(0)); if (RM) for (const x of pop) m[x.patch][x.lin]++; return RM ? m : null; })(), moves: moves ? moves.map((r) => r.slice()) : null,
             genTime: totalBirths ? parentAgeSum / totalBirths : null, parentAgeSum, lifeSum, thermal: patches.reduce((a, p) => a + p.thermal, 0) / patches.length, catches, huntSteps, causes: { ...causes }, disasters, preyFraction: patches.reduce((a, p) => a + p.prey / env.prey, 0) / patches.length,
             resource: patches.reduce((a, p) => a + p.resource, 0) / patches.length, extinctAt, capHit,
             modes: (() => { const m = new Array(NM + 1).fill(0); for (const x of pop) m[x.mode]++; return m; })(),
@@ -729,5 +758,5 @@
     return simulate({ lineageCount: genomes.length, ...options, founders: n, mutation: false, founderGenomes: set });
   }
 
-  return { rng, MODES, INPUTS, LOCI, TRAITS, STORAGE_INDEX: NL, DEFAULTS, ENVIRONMENTS, DEV_SIGNALS, REFERENCE_DEV, founderGenome, cloneGenome, mutate, develop, genomeStats, simulate, assay };
+  return { REALM_DEFS, REALM_ADJ, REALM_DIFF, REALM_MOVE, rng, MODES, INPUTS, LOCI, TRAITS, STORAGE_INDEX: NL, DEFAULTS, ENVIRONMENTS, DEV_SIGNALS, REFERENCE_DEV, founderGenome, cloneGenome, mutate, develop, genomeStats, simulate, assay };
 });
