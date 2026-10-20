@@ -49,15 +49,19 @@
   // Ticks in data units. For a Celsius display the tick values are chosen in Celsius and returned as kelvin.
   function ticks(lo, hi, scale, unit = 'K', target = 5) {
     const out = [];
-    if (scale === 'log') { for (let e = Math.ceil(Math.log10(lo) - 1e-9); e <= Math.floor(Math.log10(hi) + 1e-9); e++) out.push(Math.pow(10, e)); return out; }
+    if (scale === 'log') {
+      const span = Math.log10(hi) - Math.log10(lo), mant = span < 1.2 ? [1, 1.5, 2, 3, 4, 5, 6, 8] : span < 2.6 ? [1, 2, 5] : [1];
+      for (let e = Math.floor(Math.log10(lo)) - 1; e <= Math.ceil(Math.log10(hi)); e++) for (const m of mant) { const v = m * Math.pow(10, e); if (v >= lo * (1 - 1e-9) && v <= hi * (1 + 1e-9)) out.push(v); }
+      return out;
+    }
     const off = unit === 'C' ? ABS_ZERO_OFFSET : 0, a = lo - off, b = hi - off, st = niceStep(b - a, target);
     for (let v = Math.ceil(a / st - 1e-9) * st; v <= b + 1e-9; v += st) out.push(Math.round((v + off) * 1e9) / 1e9);
     return out;
   }
   function formatTick(v, scale, kind, unit) {
     if (kind === 'x') return unit === 'C' ? `${Math.round(kelvinToCelsius(v) * 10) / 10}` : `${Math.round(v * 10) / 10}`;
-    if (v >= 1e5 || (scale === 'log' && (v >= 1e4 || v < 1))) { const e = Math.round(Math.log10(v)); return Math.abs(v / Math.pow(10, e) - 1) < 1e-6 ? `1e${e}` : v.toExponential(1); }
-    return `${Math.round(v * 100) / 100}`;
+    const trim = (n) => `${Math.round(n * 100) / 100}`;
+    if (v >= 1e6) return `${trim(v / 1e6)}M`; if (v >= 1e3) return `${trim(v / 1e3)}k`; return trim(v);
   }
   // Zoom about an anchor (fraction 0..1 along the axis) and pan, both in axis space so a log axis zooms by ratio.
   function zoomRange(range, scale, factor, anchor = 0.5) {
@@ -73,22 +77,31 @@
     if (!(hi > lo)) hi = lo + (scale === 'log' ? lo : 1);
     return [lo, hi];
   }
+  // Standard view (Stage 1.9C): x = temperature on a log axis in kelvin (right = hotter), y = absolute pressure on a log axis with LOW pressure
+  // at the top and HIGH at the bottom. Ranges are per realm by default ('per'); 'common' uses one shared range for every panel.
+  const REALM_IDS = ['water', 'land', 'underground', 'air'];
+  const realmById = (id) => REALMS.find((r) => r.id === id);
   function defaultView() {
-    return { split: true, xUnit: 'C', xScale: 'linear', yScale: 'log', xRev: false, yRev: false, xr: autoRange('x', 'linear'), yr: autoRange('y', 'log') };
+    const v = { split: true, xUnit: 'K', xScale: 'log', yScale: 'log', xRev: false, yRev: true, rangeMode: 'per', xr: autoRange('x', 'log'), yr: autoRange('y', 'log'), pr: {} };
+    v.pr = autoPanels(v); return v;
   }
-  // Switching scale or unit never leaves an invalid range behind: the range is rebuilt as the whole picture.
+  function autoPanels(v) { const o = {}; for (const r of REALMS) o[r.id] = { xr: autoRange('x', v.xScale, [r]), yr: autoRange('y', v.yScale, [r]) }; return o; }
+  // The range a panel draws with: the shared one when merged or in 'common' mode, otherwise the realm's own.
+  function panelRange(view, realmId) { if (!view.split || view.rangeMode === 'common' || !view.pr || !view.pr[realmId]) return { xr: view.xr, yr: view.yr }; return view.pr[realmId]; }
+  function setPanelRange(view, realmId, xr, yr) { if (!view.split || view.rangeMode === 'common') return { ...view, xr, yr }; return { ...view, pr: { ...view.pr, [realmId]: { xr, yr } } }; }
+  // Switching scale or unit never leaves an invalid range behind: every range is rebuilt as the whole picture.
   function setScale(view, axis, scale) {
     const v = { ...view };
-    if (axis === 'x') { const n = normaliseAxisChoice(v.xUnit, scale); v.xUnit = n.unit; v.xScale = n.scale; v.xr = autoRange('x', v.xScale); }
-    else { v.yScale = scale; v.yr = autoRange('y', v.yScale); }
-    return v;
+    if (axis === 'x') { const n = normaliseAxisChoice(v.xUnit, scale); v.xUnit = n.unit; v.xScale = n.scale; }
+    else v.yScale = scale;
+    v.xr = autoRange('x', v.xScale); v.yr = autoRange('y', v.yScale); v.pr = autoPanels(v); return v;
   }
-  function setUnit(view, unit) { const n = normaliseAxisChoice(unit, view.xScale); return { ...view, xUnit: n.unit, xScale: n.scale, xr: n.scale === view.xScale ? view.xr : autoRange('x', n.scale) }; }
-  function resetView(view) { return { ...view, xr: autoRange('x', view.xScale), yr: autoRange('y', view.yScale) }; }
+  function setUnit(view, unit) { const n = normaliseAxisChoice(unit, view.xScale); const v = { ...view, xUnit: n.unit, xScale: n.scale }; if (n.scale !== view.xScale) { v.xr = autoRange('x', n.scale); v.pr = autoPanels(v); } return v; }
+  function resetView(view) { const v = { ...view, xr: autoRange('x', view.xScale), yr: autoRange('y', view.yScale) }; v.pr = autoPanels(v); return v; }
   // Screen mapping inside a rectangle; `rev` flips the direction. Returns null for values a log axis cannot place.
   function project(v, range, scale, size, rev, isY) {
     const a = toAxis(v, scale), lo = toAxis(range[0], scale), hi = toAxis(range[1], scale); if (a === null || lo === null || hi === null) return null;
     let f = (a - lo) / (hi - lo); if (isY) f = 1 - f; if (rev) f = 1 - f; return f * size;
   }
-  return { REALMS, FACTORS, REFERENCE, kelvinToCelsius, celsiusToKelvin, toAxis, fromAxis, normaliseAxisChoice, autoRange, ticks, formatTick, zoomRange, panRange, clampRange, defaultView, setScale, setUnit, resetView, project };
+  return { REALMS, FACTORS, REFERENCE, kelvinToCelsius, celsiusToKelvin, toAxis, fromAxis, normaliseAxisChoice, autoRange, ticks, formatTick, zoomRange, panRange, clampRange, defaultView, autoPanels, panelRange, setPanelRange, setScale, setUnit, resetView, project };
 });

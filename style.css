@@ -76,3 +76,15 @@ select{background:var(--panel);color:var(--text);border:1px solid #2c3f55;border
 
 table.rt{width:100%;border-collapse:collapse;font-size:13px;margin:4px 0}table.rt th,table.rt td{padding:3px 4px;text-align:right}table.rt th:first-child,table.rt td:first-child{text-align:left}table.rt tr+tr td{border-top:1px solid #243548}
 .ovbadge{font-size:12px;color:var(--warn);margin:6px 0}
+
+#speeds button{padding:0;font-size:12px;min-width:0}
+#speedinfo{margin:0 2px 4px;min-height:1.4em}#speedinfo.behind{color:var(--warn)}
+#linbar{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:13px;margin:6px 2px}
+#linbar span{white-space:nowrap}#linbar .up{color:var(--ok)}#linbar .dn{color:var(--bad)}
+.bghead{font-size:12px;color:var(--dim);margin:6px 2px 2px}
+canvas#bgstrip{width:100%;height:110px;display:block;background:#0a111a;border-radius:10px}
+#legend div{margin:2px 0;line-height:1.4}
+.evo{border-top:1px solid #243548;padding:8px 0}.evo h4{margin:0 0 4px;font-size:15px}.evo .chg{font-size:13px;margin:2px 0}.evo .chg b{color:var(--text)}
+.na{color:var(--dim);font-style:italic}
+table.cmp{width:100%;border-collapse:collapse;font-size:12px}table.cmp th,table.cmp td{padding:3px 3px;text-align:right}table.cmp th:first-child,table.cmp td:first-child{text-align:left}table.cmp tr+tr td{border-top:1px solid #243548}
+.sl{width:100%;margin:6px 0}
