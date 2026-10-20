@@ -23,9 +23,9 @@
   // (resource partitioning); it never guarantees coexistence. HONEST NOTE: a first draft made `standard` an even generalist (1/3 each); as the player's
   // starting type it survived in only 1/8 trial runs, because specialists out-eat a generalist that pays no cost. These weights give every type one main
   // food instead (two alternative sets were compared and this one kept). That choice was made after seeing survival rates; nothing was tuned afterwards.
-  // Remaining differences (e.g. 頑丈型 surviving less often) come from the types' genes and costs and are reported as they are (docs/COEXISTENCE_STUDY.md).
+  // Remaining differences (e.g. 頑丈型 surviving less often) come from the types' genes and costs and are reported as they are.
   // NICHE_BONUS: digestive efficiency rises with how much of the diet a food is. 1.5 was the smallest value tried (0, 0.5, 1, 1.5) at which most
-  // runs still had two or more lineages after 4000 steps (see diagnose.js / docs). It is a modelling choice, not a measurement.
+  // runs still had two or more lineages after 4000 steps (from internal trial runs). It is a modelling choice, not a measurement.
   const NICHE_BONUS = 1.5, NICHE_SLOTS = 3, NICHE_NAMES = ['餌A（地表の草・藻）', '餌B（種・実）', '餌C（根・腐植）'];
   // Traits shown in "what evolved", with the wording for a rise / a fall, and the parts of the cognition index.
   const EVO = [
