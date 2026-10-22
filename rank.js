@@ -16,8 +16,8 @@
   //     competition how long the lineage has persisted in a row while a competing lineage was present
   //   A rank is a set of conditions on continuity and on HOW MANY axes reach which tier, never on which axes. Different
   //   evolutionary routes (low metabolism and dormancy, repair, wide range, competition) can satisfy the same rank.
-  // Not scored, because the engine cannot tell the difference yet: independence from groups or technology (every individual here is
-  // independent already), temperature-pressure range (the map's ranges are dummies), and anything beyond the four realms.
+  //     independence (Stage 2.0) hostile-civilisation episodes survived without help from a coexistence subsidy; not computed when the world has no civilisation model.
+  // Not scored, because the engine cannot tell the difference yet: temperature-pressure range (the map's ranges are dummies), and anything beyond the four realms.
   // Omega is never awarded: its formal test needs abilities that are not implemented.
   const AXES = [
     { id: 'aging', name: '老化・損傷への抵抗', unit: '75ステップ以上の死亡率÷25〜49ステップの死亡率（低いほど良い。年齢の区切りはステップ数）', better: 'low', tiers: [2.5, 1.8, 1.25, 1.05], need: { young: 300, old: 300 } },
@@ -25,6 +25,7 @@
     { id: 'efficiency', name: '資源効率・低代謝', unit: '1個体・1ステップの消費エネルギー（低いほど低代謝）', better: 'low', tiers: [0.24, 0.17, 0.11, 0.07], intakeRatio: 0.9 },
     { id: 'range', name: '活動できる環境の広さ', unit: '個体群が定着している領域の数（4領域まで。温度・圧力の範囲は未計算）', better: 'high', tiers: [3, 4, Infinity, Infinity], capTier: 2 },
     { id: 'dormancy', name: '休眠からの回復', unit: '休眠のうち、目覚めで終わった割合（死亡で終わらなかった割合）', better: 'high', tiers: [0.6, 0.75, 0.88, 0.96], need: { episodes: 30 } },
+    { id: 'independence', name: '集団・技術に頼らない自力の生存', unit: '知性文明の敵対（捕獲・駆除・環境破壊）の下で、共存による支援に頼らずに存続した回数（ゲーム上の仮定。文明が現れない世界では未計算）', better: 'high', tiers: [1, 2, 4, 8] },
     { id: 'competition', name: '競争下での持続力', unit: '競争相手がいる状態で、系統が途切れず存続した期間（ステップ）', better: 'high', tiers: [4000, 15000, 50000, 150000] },
   ];
   const CONTINUITY = { name: '連続生存期間', unit: '個体が途切れず生きた最長記録（ステップ）', tiers: [150, 300, 600, 1500, 4000] };
@@ -50,6 +51,7 @@
       if (ax.id === 'aging' && (d.young < ax.need.young || d.old < ax.need.old)) { value = null; why = 'データ不足'; }
       if (ax.id === 'dormancy' && !(d.episodes >= ax.need.episodes)) { value = null; why = '休眠の回数が少なくてデータ不足'; }
       if (ax.id === 'efficiency' && value !== null && d.intakeRatio < ax.intakeRatio) { value = null; why = '摂取が消費を賄えていない'; }
+      if (ax.id === 'independence' && (d.value === undefined || d.value === null)) { value = null; why = '文明のモデルがない世界では未計算'; }
       const tier = tierOf(value, ax);
       const next = tier === null ? null : ax.tiers[tier] !== undefined && ax.tiers[tier] !== Infinity && (ax.capTier === undefined || tier < ax.capTier) ? ax.tiers[tier] : null;
       return { id: ax.id, name: ax.name, unit: ax.unit, value, tier, next, why, better: ax.better };
