@@ -31,26 +31,30 @@
 
 <div id="play" class="screen" hidden>
   <header>
-    <div><b id="h-t">0</b><small> ステップ</small></div>
-    <div><b id="h-gen">0</b><small> 世代</small></div>
+    <div><b id="h-t">0</b><small> 経過（仮定）</small></div>
+    <div><b id="h-gen">0</b><small> 累積世代</small></div>
     <div><b id="h-pop">0</b><small> 体</small></div>
     <button id="menu" class="btn small">メニュー</button>
   </header>
   <div id="timeline"></div>
   <canvas id="world" width="360" height="260"></canvas>
+  <div id="rankbar"></div>
   <div id="linbar"></div>
   <div class="controls">
     <button id="pp" class="btn primary">⏸</button>
     <div id="speeds"></div>
     <button id="save" class="btn small">保存</button>
   </div>
+  <div class="skiprow"><button id="skip" class="btn small">⏭ 次の出来事まで早送り</button><span id="skipnote" class="note"></span></div>
   <div id="speedinfo" class="note"></div>
   <div class="controls2"><button id="auto" class="chip">自動：OFF</button><span class="note" id="auto-note">分岐点で止まります</span></div>
   <div class="bghead">背景（アリーナの外の世界）：粗い計算</div>
   <canvas id="bgstrip" width="360" height="110"></canvas>
   <div id="legend"></div>
-  <nav id="tabs"><button data-tab="stat" class="on">状況</button><button data-tab="trait">形質</button><button data-tab="graph">推移</button><button data-tab="env">環境</button><button data-tab="log">履歴</button></nav>
+  <nav id="tabs"><button data-tab="stat" class="on">状況</button><button data-tab="ind">個体</button><button data-tab="rank">ランク</button><button data-tab="trait">形質</button><button data-tab="graph">推移</button><button data-tab="env">環境</button><button data-tab="log">履歴</button></nav>
   <section id="tab-stat"></section>
+  <section id="tab-ind" hidden></section>
+  <section id="tab-rank" hidden></section>
   <section id="tab-trait" hidden></section>
   <section id="tab-graph" hidden><canvas id="chart" width="360" height="200"></canvas><div id="chart-note" class="note"></div></section>
   <section id="tab-env" hidden>
@@ -72,6 +76,7 @@
 <script src="adaptation.js"></script>
 <script src="timemodel.js"></script>
 <script src="habitat.js"></script>
+<script src="rank.js"></script>
 <script src="game.js"></script>
 <script src="app.js"></script>
 </body>

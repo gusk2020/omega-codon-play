@@ -5,7 +5,7 @@
   const SPEEDS = [10, 30, 100, 400, 1500, 6000], SPEED_LABEL = ['×1', '×3', '×10', '×40', '×150', '×600']; // target steps per second
   const SLOT_OF_REALM = [3, 0, 2, 1], REALM_OF_SLOT = [1, 3, 2, 0]; // realm ids are water, land, underground, air; slots are top-left, top-right, bottom-left, bottom-right. Land TL, air TR, underground BL, water BR
   const REALM_COLOR = { water: '#4fa3ff', land: '#46c28a', underground: '#f2a03d', air: '#b38cf0' };
-  const KEY = 'omega-codon-saves-v1', SKEY = 'omega-codon-settings-v2';
+  const KEY = 'omega-codon-saves-v1', SKEY = 'omega-codon-settings-v3';
   const MODE_JA = ['休眠', '待機', '探索', '狩り', '修復', '移行'];
   const CAUSE_JA = { capacityCull: '過密', extrinsic: '事故', starvation: '飢餓', senescence: '老衰', thermal: '寒暖', pathogen: '病気', disaster: '災害', injury: '狩りの傷' };
   let sel = ['standard'], rivalN = 2, measured = { rate: 0, t: 0, steps: 0 }, scenarioId = 'kpg', envId = 'steady', game = null, playing = false, speedIdx = 1, tab = 'stat', metric = 'pop', loading = null;
@@ -75,23 +75,23 @@
     buildSpeeds(); measured = { rate: 0, t: performance.now(), steps: g.t };
     $('legend').innerHTML = '<div><b>点の意味</b>（アリーナ＝詳細に計算している範囲）</div><div>● 注目系統　■ 競争相手・移入した系統　1点＝<b>実際の1個体</b>　点の大きさ＝<b>その個体のエネルギー量</b>　赤い輪＝狩り中　薄い＝休眠</div><div>下の「背景」の1点＝背景集団の<b>10単位</b>（個体数ではなく、粗い計算の代表集団）　点の大きさ＝<b>直近の増殖率</b></div>';
     setSpeed(speedIdx); setPP(); setAutoBtn(); draw(true);
-    if (g.pending) showPrompt();
+    cpShown = false; if (g.pending) showPrompt(); else if (g.checkpoint) showCheckpoint();
   }
   function setAutoBtn() { const on = !!(game && game.autoContinuous); $('auto').textContent = '自動：' + (on ? 'ON' : 'OFF'); $('auto').classList.toggle('on', on); $('auto-note').textContent = on ? '分岐点では止まらず、中立的な「見守る」を選びます（履歴に理由を残します）' : '分岐点で止まります'; }
   $('auto').onclick = () => { if (!game) return; game.setAutoContinuous(!game.autoContinuous); setAutoBtn(); toast(game.autoContinuous ? '連続自動モード ON' : '連続自動モード OFF'); };
   function buildSpeeds() { const el = $('speeds'); if (el.children.length) return; SPEED_LABEL.forEach((n, i) => { const b = document.createElement('button'); b.dataset.s = i; b.textContent = n; b.onclick = () => setSpeed(i); el.appendChild(b); }); }
   function setSpeed(i) { speedIdx = i; document.querySelectorAll('#speeds button').forEach((b) => b.classList.toggle('on', Number(b.dataset.s) === i)); }
   function setPP() { $('pp').textContent = playing ? '⏸' : '▶'; }
-  $('pp').onclick = () => { if (!game || game.pending || game.live.done || loading) return; playing = !playing; setPP(); };
+  $('pp').onclick = () => { if (!game || game.pending || game.checkpoint || game.isOver || loading) return; playing = !playing; setPP(); };
   $('save').onclick = () => { if (!game) return; playing = false; setPP(); openMenu(true); };
   $('menu').onclick = () => { if (!game) return; playing = false; setPP(); openMenu(false); };
-  document.querySelectorAll('#tabs button').forEach((b) => { b.onclick = () => { tab = b.dataset.tab; document.querySelectorAll('#tabs button').forEach((x) => x.classList.toggle('on', x === b)); for (const t of ['stat', 'trait', 'graph', 'env', 'log']) $('tab-' + t).hidden = t !== tab; draw(true); }; });
+  document.querySelectorAll('#tabs button').forEach((b) => { b.onclick = () => { tab = b.dataset.tab; document.querySelectorAll('#tabs button').forEach((x) => x.classList.toggle('on', x === b)); for (const t of ['stat', 'ind', 'rank', 'trait', 'graph', 'env', 'log']) $('tab-' + t).hidden = t !== tab; draw(true); }; });
 
   function openMenu(saveFocus) {
     const card = $('modal-card'); card.innerHTML = `<h3>${saveFocus ? '保存' : 'メニュー'}</h3><div id="menu-slots"></div>`;
     const slots = card.querySelector('#menu-slots'); renderSlots(slots, true);
     const mk = (t, f, cls) => { const b = document.createElement('button'); b.className = 'btn ' + (cls || '') + ' big'; b.textContent = t; b.onclick = f; card.appendChild(b); };
-    mk('閉じて続ける', () => { $('modal').hidden = true; if (!game.pending && !game.live.done) { playing = true; setPP(); } }, 'primary');
+    mk('閉じて続ける', () => { $('modal').hidden = true; if (!game.pending && !game.isOver) { playing = true; setPP(); } }, 'primary');
     mk('タイトルに戻る（自動保存します）', () => { putSave('auto'); game = null; playing = false; $('modal').hidden = true; $('play').hidden = true; $('start').hidden = false; renderStart(); });
     $('modal').hidden = false;
   }
@@ -134,12 +134,18 @@
     requestAnimationFrame(frame);
     const dt = Math.min(0.1, (ts - lastTs) / 1000 || 0); lastTs = ts;
     if (!game || loading) return;
-    if (playing && !game.pending && !game.live.done) {
-      acc += dt * SPEEDS[speedIdx]; const t0 = performance.now(), budget = speedIdx >= 4 ? 11 : 8, chunk = speedIdx >= 4 ? 25 : 10;
-      while (acc >= 1 && performance.now() - t0 < budget && !game.pending && !game.live.done) { const n = Math.min(Math.floor(acc), chunk); game.advance(n); acc -= n; }
+    if (playing && !game.pending && !game.checkpoint && !game.isOver) {
+      const t0 = performance.now();
+      if (skipping) {
+        while (performance.now() - t0 < 12 && !game.pending && !game.checkpoint && !game.isOver) { game.advance(25); if (game.events.slice(skipping.n0).some((e) => STOP_KINDS.has(e.kind)) || game.t - skipping.t0 >= MAX_SKIP) { stopSkip(false); break; } }
+        if (skipping) $('skipnote').textContent = `早送り中… ${(game.t - skipping.t0).toLocaleString('ja-JP')}ステップ`; else acc = 0;
+      } else {
+        acc += dt * SPEEDS[speedIdx]; const budget = speedIdx >= 4 ? 11 : 8, chunk = speedIdx >= 4 ? 25 : 10;
+        while (acc >= 1 && performance.now() - t0 < budget && !game.pending && !game.checkpoint && !game.isOver) { const n = Math.min(Math.floor(acc), chunk); game.advance(n); acc -= n; }
+      }
       if (acc > SPEEDS[speedIdx] * 0.2) acc = SPEEDS[speedIdx] * 0.2; // drop the backlog instead of falling ever further behind
       if (game.t - lastAuto >= 500) { putSave('auto'); lastAuto = game.t; }
-      if (game.pending) showPrompt(); else if (game.live.done) showEnd();
+      if (game.pending) { skipping = null; $('skip').textContent = '⏭ 次の出来事まで早送り'; showPrompt(); } else if (game.checkpoint) showCheckpoint(); else if (game.isOver) showEnd();
       const now = performance.now(); if (now - measured.t >= 1000) { measured = { rate: (game.t - measured.steps) / ((now - measured.t) / 1000), t: now, steps: game.t }; showSpeed(); }
     } else { measured = { rate: 0, t: performance.now(), steps: game.t }; showSpeed(); }
     if (ts - lastDraw > (speedIdx >= 4 ? 110 : 66)) { draw(false); lastDraw = ts; }
@@ -204,8 +210,17 @@
     const histHtml = hi ? '<div class="grp">地球史（シナリオ）</div>' + `<p class="note">開始：${HS.formatYearsBP(HS.KPG_AGE_YEARS_BP)}（白亜紀末の衝突）。衝突から約${hi.yearsSinceImpact.toFixed(1)}年（1ステップ=1日の仮定・未校正）。年代の不確かさは前後約${Math.round(hi.yearsBPUncertainty / 1000)}千年。</p>` +
       hi.events.map((e) => `<div class="ev"><small>${e.status === 'applied' ? '✔ 計算に反映' : '○ 年表のみ（計算には未反映）'}｜約${e.ageMa}百万年前（±${e.uncMa}）｜${e.kind}</small>${e.name}</div>`).join('') : '';
     const fmt = (v, d = 1) => (v === null || v === undefined ? '-' : v.toFixed(d));
-    const cmpHtml = game.v2 ? '<div class="grp">系統の比較（実際に計算した値）</div><table class="cmp"><tr><th>系統</th><th>個体数</th><th>直近増減</th><th>出生率</th><th>死亡率</th><th>平均寿命</th><th>摂取/個体</th><th>エネルギー合計</th></tr>' + rep.map((l) => { const w = l.window, ls = l.stats; return `<tr><td><i style="color:${l.color}">${l.role === 'focus' ? '●' : '■'}</i> ${l.name}</td><td>${l.alive}</td><td class="${l.change100 > 0 ? 'up' : l.change100 < 0 ? 'dn' : ''}">${l.change100 === null ? '-' : (l.change100 > 0 ? '+' : '') + l.change100}</td><td>${w ? fmt(w.birthRate * 100, 1) : '-'}</td><td>${w ? fmt(w.deathRate * 100, 1) : '-'}</td><td>${ls.deaths ? fmt(ls.lifeSum / ls.deaths, 1) : '-'}</td><td>${w ? fmt(w.intakePerIndividual, 2) : '-'}</td><td>${fmt(ls.energy, 0)}</td></tr>`; }).join('') + '</table><p class="note">出生率・死亡率は、1個体あたり100ステップあたりの数（直近約100ステップ）。平均寿命は死亡した個体の平均（ステップ）。摂取は1個体・1ステップあたりのエネルギー。エネルギー合計は生物量の代わりの指標で、体の大きさは計算していません。</p>' +
-      (() => { const d = game.diversity(); return `<p class="note">多様性（計算している範囲の中で）：アリーナに系統 ${d.arenaRichness}（シャノン指数 ${d.arenaShannon.toFixed(2)}）／背景のグループ ${d.backgroundRichness}（${d.backgroundShannon.toFixed(2)}）。${d.note}</p>`; })() : '';
+    const recs = game.records(), recOf = (i) => recs.find((r) => r.lin === i) || { recordAge: 0, aliveNow: 0 };
+    const cmpHtml = game.v2 ? (() => {
+      const tot = Math.max(1, rep.reduce((a, l) => a + l.alive, 0)), est = rep.filter((l) => l.alive >= 5);
+      const best = (f, dir) => { let b = null; for (const l of est) { const v = f(l); if (v === null || v === undefined) continue; if (b === null || (dir > 0 ? v > b.v : v < b.v)) b = { v, l }; } return b; };
+      const bn = best((l) => l.alive, 1), bl = best((l) => recOf(l.lin).recordAge, 1), bd = best((l) => (l.window ? l.window.deathRate : null), -1);
+      const eff = (l) => { const d = game.live.lineageDetail()[l.lin]; return d.spent > 0 ? l.stats.intake / d.spent : null; }, bef = best(eff, 1);
+      return '<div class="grp">系統の比較（実際に計算した値）</div><table class="cmp"><tr><th>系統</th><th>個体数</th><th>直近増減</th><th>最長（生存中/記録）</th><th>平均寿命</th><th>死亡率</th><th>出生率</th><th>資源効率</th></tr>' + rep.map((l) => { const w = l.window, ls = l.stats, r = recOf(l.lin), e = eff(l); return `<tr><td><i style="color:${l.color}">${l.role === 'focus' ? '●' : '■'}</i> ${l.name}</td><td>${l.alive}</td><td class="${l.change100 > 0 ? 'up' : l.change100 < 0 ? 'dn' : ''}">${l.change100 === null ? '-' : (l.change100 > 0 ? '+' : '') + l.change100}</td><td>${r.aliveNow}/${r.recordAge}</td><td>${ls.deaths ? fmt(ls.lifeSum / ls.deaths, 1) : '-'}</td><td>${w ? fmt(w.deathRate * 100, 1) : '-'}</td><td>${w ? fmt(w.birthRate * 100, 1) : '-'}</td><td>${e === null ? '-' : fmt(e, 2)}</td></tr>`; }).join('') + '</table>' +
+        `<p class="note"><b>数の優勢</b>：${bn ? `${bn.l.name}（個体の${Math.round((bn.v / tot) * 100)}%）` : '-'}　<b>長く生きる優勢</b>（最長記録）：${bl ? `${bl.l.name}（${bl.v}ステップ）` : '-'}　<b>死亡率が最も低い</b>：${bd ? bd.l.name : '-'}　<b>資源効率が最も高い</b>：${bef ? bef.l.name : '-'}。数が多いことと、少数でも強く長く生きることは別の優勢です。</p>` +
+        '<p class="note">死亡率・出生率は、1個体あたり100ステップあたり（直近約100ステップ）。平均寿命は死亡した個体の平均、最長は個体が途切れず生きた期間。資源効率は、摂取エネルギー÷消費エネルギー。エネルギー合計や生物量は体の大きさを計算していないため、比較に使っていません。背景の集団については、個体ごとの寿命・死亡率は計算していません。</p>' +
+        (() => { const d = game.diversity(); return `<p class="note">多様性（計算している範囲の中で）：アリーナに系統 ${d.arenaRichness}（シャノン指数 ${d.arenaShannon.toFixed(2)}）／背景のグループ ${d.backgroundRichness}（${d.backgroundShannon.toFixed(2)}）。${d.note}</p>`; })();
+    })() : '';
     const bgr = game.backgroundReport(), bgHtml = bgr ? '<div class="grp">背景生態系（アリーナの外・粗い計算）</div>' + `<table class="cmp"><tr><th>グループ</th><th>単位</th><th>増殖</th><th>移入累計</th><th>状態</th></tr>${bgr.groups.map((g) => `<tr><td><i style="color:${g.color}">◆</i> ${g.name}</td><td>${g.extinct ? '-' : Math.round(g.units)}</td><td class="${g.growth > 0 ? 'up' : g.growth < 0 ? 'dn' : ''}">${g.extinct ? '-' : (g.growth * 100).toFixed(1) + '%'}</td><td>${g.immigrantsTotal}</td><td>${g.extinct ? '絶えた' : g.inArena ? 'アリーナにも' : '背景のみ'}</td></tr>`).join('')}</table><p class="note">単位は個体相当の量で、個体数そのものではありません。アリーナの個体と背景の単位は別の場所のもので、重ねて数えていません。背景から来た個体は進化していない祖先型です。${bgr.note}</p>` : '';
     $('tab-stat').innerHTML = histHtml + realmHtml + cmpHtml + bgHtml + '<div class="grp">注目系統（あなたが選んだ生き物）</div>' + linRows(focus) +
       (riv.length ? '<div class="grp">競争相手（独立に進化を計算）</div>' + linRows(riv) + '<p class="note">競争相手を捕食する関係は計算していません（獲物は全系統に共通の背景資源です）。</p>' : '<div class="grp">競争相手</div><p class="note">なし。選んだ生き物だけが計算されています。</p>') +
@@ -257,10 +272,11 @@
   function drawLog() {
     $('tab-log').innerHTML = game.events.slice().reverse().slice(0, 120).map((e) => `<div class="ev ${e.kind}"><small>${e.t}ステップ／約${e.gen}世代</small>${e.text}</div>`).join('') || '<p class="note">まだ出来事はありません。</p>';
   }
+  // The headline time is the elapsed time under an ASSUMED step length (uncalibrated), the era, and the cumulative generations. Steps are small print.
   function drawTimeline(ti) {
-    const a = TM.find(assume), hi = game.historyInfo();
-    if (hi) { $('timeline').innerHTML = `経過 <b>${ti.steps}ステップ ≈ 衝突から${TM.formatDays(ti.steps)}</b>（仮定：1ステップ=1日・未校正）<br>地球史：<b>${HS.formatYearsBP(HS.KPG_AGE_YEARS_BP)}</b>（K–Pg境界）＋ 約${hi.yearsSinceImpact.toFixed(1)}年　参考（世代×平均寿命）≈ ${Math.round(ti.lifespanReferenceSteps)}ステップ分　<a href="#" id="why-time" style="color:var(--accent)">これは何？</a>`; const w0 = $('why-time'); if (w0) w0.onclick = (e) => { e.preventDefault(); openTimeInfo(); }; return; }
-    $('timeline').innerHTML = `経過 <b>${ti.steps}ステップ ≈ ${TM.format(ti.steps, assume)}</b>（仮定：${a.name}）<br>参考：世代×その時点の平均寿命 ≈ <b>${Math.round(ti.lifespanReferenceSteps)}ステップ分 ≈ ${TM.format(ti.lifespanReferenceSteps, assume)}</b>　<a href="#" id="why-time" style="color:var(--accent)">これは何？</a>`;
+    const hi = game.historyInfo(), unit = hi ? 'day' : assume, a = TM.find(unit);
+    const era = hi ? `年代：<b>${HS.formatYearsBP(HS.KPG_AGE_YEARS_BP)}</b>（K–Pg境界）＋ 約${hi.yearsSinceImpact.toFixed(1)}年` : `年代：自由開始（地球史とは対応させていません）`;
+    $('timeline').innerHTML = `${era}　<small>内部 ${ti.steps.toLocaleString('ja-JP')}ステップ／${a.name}（仮定・未校正）</small><br><small>参考：世代×その時点の平均寿命 ≈ ${Math.round(ti.lifespanReferenceSteps).toLocaleString('ja-JP')}ステップ分 ≈ ${TM.format(ti.lifespanReferenceSteps, unit)}　<a href="#" id="why-time" style="color:var(--accent)">これは何？</a></small>`;
     const w = $('why-time'); if (w) w.onclick = (e) => { e.preventDefault(); openTimeInfo(); };
   }
   function openTimeInfo() {
@@ -269,7 +285,7 @@
       <p class="note">・経過：ステップ数に、選んだ仮定（${TM.find(assume).name}）を掛けた値。<br>・推定世代：各区間の平均世代時間（親が子を産んだときの年齢の平均）で、経過ステップを割って足し合わせた値。寿命が変わっても減りません。<br>・参考（世代×平均寿命）：各区間の世代の増分に、その区間の平均寿命を掛けて足した値。真の経過時間ではなく、世代と寿命の関係を見るための参考値です。<br>・現在の区間：世代時間 ${ti.windowGenerationTime ? ti.windowGenerationTime.toFixed(1) : '-'} ステップ／平均寿命 ${ti.windowLifespan ? ti.windowLifespan.toFixed(1) : '-'} ステップ。<br>・将来の長期設定では、開始は約6,600万年前の想定です。いまのステップとの対応は未校正で、この画面の値は6,600万年前からの経過年ではありません。</p>
       ${game.historyInfo() ? (() => { const sc = HS.scaleCheck(ti.windowLifespan || 0, ti.windowGenerationTime || 0); return `<div class="assume"><b>地球史モードの時間尺度（仮定）：</b>1ステップ=1日に固定されています。いまの区間では、平均寿命は約${Math.round(sc.lifespanDays)}日、世代時間は約${Math.round(sc.generationDays)}日に相当します。${sc.note}<br>6,600万年を1ステップずつ進めることは想定していません。時代を飛び越す粗い時間尺度は未実装です。</div>`; })() : ''}
       <select id="assume-sel"${game.historyInfo() ? ' disabled' : ''}>${TM.ASSUMPTIONS.map((a) => `<option value="${a.id}"${a.id === assume ? ' selected' : ''}>${a.name}（仮定）</option>`).join('')}</select>`;
-    const b = document.createElement('button'); b.className = 'btn primary big'; b.textContent = '閉じる'; b.onclick = () => { if (!game.historyInfo()) assume = $('assume-sel').value; saveSettings(); $('modal').hidden = true; if (p && !game.pending && !game.live.done) { playing = true; setPP(); } draw(true); }; card.appendChild(b);
+    const b = document.createElement('button'); b.className = 'btn primary big'; b.textContent = '閉じる'; b.onclick = () => { if (!game.historyInfo()) assume = $('assume-sel').value; saveSettings(); $('modal').hidden = true; if (p && !game.pending && !game.isOver) { playing = true; setPP(); } draw(true); }; card.appendChild(b);
     $('modal').hidden = false;
   }
 
@@ -282,35 +298,65 @@
     const small = hv.split, ml = small ? 38 : 48, mb = small ? 24 : 32, mt = small ? 16 : 8, mr = 6, panels = hv.split ? [0, 1, 2, 3].map((slot) => [H.REALMS[REALM_OF_SLOT[slot]]]) : [H.REALMS];
     panels.forEach((rl, k) => {
       const ox = (k % cols) * (pw + gap), oy = Math.floor(k / cols) * (ph + gap), px0 = ox + ml, py0 = oy + mt, w = pw - ml - mr, h = ph - mt - mb, realmId = hv.split ? rl[0].id : null;
-      const rg = H.panelRange(hv, realmId || 'land'); hRects.push({ x: px0, y: py0, w, h, realmId });
+      const rg = H.panelRange(hv, realmId || 'land'), layered = hv.split && realmId === 'land'; hRects.push({ x: px0, y: py0, w, h, realmId });
       hx.save(); hx.fillStyle = '#0d1520'; hx.fillRect(px0, py0, w, h); hx.beginPath(); hx.rect(px0, py0, w, h); hx.clip();
       const X = (T) => H.project(T, rg.xr, hv.xScale, w, hv.xRev, false), Y = (P) => H.project(P, rg.yr, hv.yScale, h, hv.yRev, true);
       hx.strokeStyle = '#223348'; hx.lineWidth = 1; hx.fillStyle = '#7f93a8';
-      const xt = H.ticks(rg.xr[0], rg.xr[1], hv.xScale, hv.xUnit, small ? 3 : 5), yt = H.ticks(rg.yr[0], rg.yr[1], hv.yScale, 'K', small ? 3 : 5);
+      const xt = H.ticks(rg.xr[0], rg.xr[1], hv.xScale, hv.xUnit, small ? 3 : 5), yt = layered ? [] : H.ticks(rg.yr[0], rg.yr[1], hv.yScale, 'K', small ? 3 : 5);
       for (const t of xt) { const x = X(t); if (x === null) continue; hx.beginPath(); hx.moveTo(px0 + x, py0); hx.lineTo(px0 + x, py0 + h); hx.stroke(); }
       for (const t of yt) { const y = Y(t); if (y === null) continue; hx.beginPath(); hx.moveTo(px0, py0 + y); hx.lineTo(px0 + w, py0 + y); hx.stroke(); }
-      for (const r of rl) {
+      if (!layered) for (const r of rl) {
         const x1 = X(r.T[0]), x2 = X(r.T[1]), y1 = Y(r.P[0]), y2 = Y(r.P[1]); if ([x1, x2, y1, y2].some((v) => v === null)) continue;
         const rx = Math.min(x1, x2), ry = Math.min(y1, y2), rw = Math.abs(x2 - x1), rh = Math.abs(y2 - y1);
         hx.globalAlpha = 0.18; hx.fillStyle = r.color; hx.fillRect(px0 + rx, py0 + ry, rw, rh); hx.globalAlpha = 1; hx.strokeStyle = r.color; hx.lineWidth = 1.5; hx.strokeRect(px0 + rx, py0 + ry, rw, rh);
         hx.fillStyle = r.color; hx.font = 'bold ' + (small ? 10 : 12) + 'px system-ui'; hx.fillText(r.name, px0 + Math.max(rx, 0) + 4, py0 + Math.max(ry, 0) + (small ? 11 : 14) + (small ? 0 : H.REALMS.indexOf(r) * 14));
       }
-      if (ov !== 'none') drawOverlay(px0, py0, X, Y, small);
+      if (layered) drawLandLayers(px0, py0, w, h, X, small); else if (ov !== 'none') drawOverlay(px0, py0, X, Y, small);
       const rx = X(H.REFERENCE.T), ry = Y(H.REFERENCE.P);
       hx.setLineDash([4, 3]); hx.strokeStyle = '#ffffff'; hx.globalAlpha = 0.75; hx.lineWidth = 1;
       if (rx !== null) { hx.beginPath(); hx.moveTo(px0 + rx, py0); hx.lineTo(px0 + rx, py0 + h); hx.stroke(); }
-      if (ry !== null) { hx.beginPath(); hx.moveTo(px0, py0 + ry); hx.lineTo(px0 + w, py0 + ry); hx.stroke(); }
+      if (ry !== null && !layered) { hx.beginPath(); hx.moveTo(px0, py0 + ry); hx.lineTo(px0 + w, py0 + ry); hx.stroke(); }
       hx.setLineDash([]); hx.globalAlpha = 1;
-      if (rx !== null && ry !== null) { hx.fillStyle = '#fff'; hx.beginPath(); hx.arc(px0 + rx, py0 + ry, 3.5, 0, 6.2832); hx.fill(); hx.font = (small ? 9 : 11) + 'px system-ui'; hx.fillText('基準', px0 + Math.min(rx + 6, w - 28), py0 + Math.max(ry - 5, 10)); }
+      if (rx !== null && ry !== null && !layered) { hx.fillStyle = '#fff'; hx.beginPath(); hx.arc(px0 + rx, py0 + ry, 3.5, 0, 6.2832); hx.fill(); hx.font = (small ? 9 : 11) + 'px system-ui'; hx.fillText('基準', px0 + Math.min(rx + 6, w - 28), py0 + Math.max(ry - 5, 10)); }
+      if (hv.split && !layered) { // where the display-assumption corners lie, whichever way the axes are turned (a sketch: real realms overlap widely)
+        const hotLeft = hv.xRev, highBottom = hv.yRev; hx.font = (small ? 9 : 10) + 'px system-ui'; hx.fillStyle = rl[0].color; hx.globalAlpha = 0.9;
+        if (realmId === 'air') { hx.textAlign = 'center'; hx.fillText(highBottom ? '↑ 宇宙側（低圧）' : '宇宙側（低圧）↓', px0 + w / 2, highBottom ? py0 + 24 : py0 + h - 6); }
+        else if (realmId === 'underground') { hx.textAlign = hotLeft ? 'left' : 'right'; hx.fillText('高温・高圧：地殻深部', hotLeft ? px0 + 4 : px0 + w - 4, highBottom ? py0 + h - 6 : py0 + 24); }
+        else if (realmId === 'water') { hx.textAlign = hotLeft ? 'right' : 'left'; hx.fillText('低温・高圧：深海', hotLeft ? px0 + w - 4 : px0 + 4, highBottom ? py0 + h - 6 : py0 + 24); }
+        hx.globalAlpha = 1; hx.textAlign = 'left';
+      }
       hx.restore();
       hx.fillStyle = '#7f93a8'; hx.font = (small ? 9 : 10) + 'px system-ui'; hx.textAlign = 'center';
       for (const t of xt) { const x = X(t); if (x === null || x < -1 || x > w + 1) continue; hx.fillText(H.formatTick(t, hv.xScale, 'x', hv.xUnit), px0 + x, py0 + h + 12); }
       hx.textAlign = 'right';
       for (const t of yt) { const y = Y(t); if (y === null || y < -1 || y > h + 1) continue; hx.fillText(H.formatTick(t, hv.yScale, 'y', 'K'), px0 - 3, py0 + y + 3); }
-      hx.textAlign = 'center'; hx.fillText(`温度 (${hv.xUnit === 'C' ? '℃' : 'K'}${hv.xScale === 'log' ? '・対数' : ''}) ${hv.xRev ? '右=低温' : '右=高温'}`, px0 + w / 2, py0 + h + (small ? 22 : 28));
-      hx.save(); hx.translate(ox + 9, py0 + h / 2); hx.rotate(-Math.PI / 2); hx.fillText(`圧力 Pa${hv.yScale === 'log' ? '・対数' : ''} ${hv.yRev ? '上=低圧' : '上=高圧'}`, 0, 0); hx.restore(); hx.textAlign = 'left';
+      hx.textAlign = 'center'; hx.fillText(`温度 (${hv.xUnit === 'C' ? '℃' : 'K'}${hv.xScale === 'log' ? '・対数' : ''}) ${hv.xRev ? '左=高温' : '右=高温'}`, px0 + w / 2, py0 + h + (small ? 22 : 28));
+      hx.save(); hx.translate(ox + 9, py0 + h / 2); hx.rotate(-Math.PI / 2); hx.fillText(layered ? '行動・情報処理の層（上=社会的知性）' : `圧力 Pa${hv.yScale === 'log' ? '・対数' : ''} ${hv.yRev ? '上=低圧' : '上=高圧'}`, 0, 0); hx.restore(); hx.textAlign = 'left';
       if (small) { hx.fillStyle = rl[0].color; hx.font = 'bold 10px system-ui'; hx.fillText(rl[0].name, px0, oy + 11); }
     });
+  }
+  // The land panel's vertical axis is three layers of behavioural / information-processing ability instead of pressure.
+  // Instinct and individual intelligence are COMPUTED from traits (see game.individualScores); social intelligence is NOT computed, so that band is
+  // hatched and empty. Each land individual appears once in each computed band (filled mark, then a ring), so marks overlap on purpose. The horizontal
+  // position is not a temperature: individual temperatures are not computed, so marks sit at the realm's representative temperature, spread for legibility.
+  function drawLandLayers(px0, py0, w, h, X, small) {
+    const bh = h / 3, names = ['社会的知性（未計算）', '個体知能 ✔計算済み', '生存本能 ✔計算済み'], cx0 = X(AD.realmCentre(H.REALMS[1]).T);
+    for (let k = 0; k < 3; k++) {
+      const y0 = py0 + k * bh; hx.globalAlpha = k % 2 ? 0.1 : 0.05; hx.fillStyle = '#46c28a'; hx.fillRect(px0, y0, w, bh); hx.globalAlpha = 1;
+      if (k === 0) { hx.strokeStyle = '#46607a'; hx.lineWidth = 1; for (let d = -bh; d < w; d += 8) { hx.beginPath(); hx.moveTo(px0 + d, y0 + bh); hx.lineTo(px0 + d + bh, y0); hx.stroke(); } }
+      hx.strokeStyle = '#2c3f55'; hx.beginPath(); hx.moveTo(px0, y0); hx.lineTo(px0 + w, y0); hx.stroke();
+      hx.fillStyle = k === 0 ? '#7f93a8' : '#46c28a'; hx.font = 'bold ' + (small ? 9 : 11) + 'px system-ui'; hx.fillText(names[k], px0 + 4, y0 + (small ? 11 : 13));
+    }
+    const ind = game.live.individuals().filter((x) => x.patch === 1);
+    for (const x of ind) {
+      const sc = game.individualScores(x), c = game.creatures[x.lin], rect = game.roleOf(x.lin) !== 'focus', jx = px0 + (cx0 === null ? w / 2 : cx0) + (hash(x.id, 3) - 0.5) * w * 0.35;
+      for (const [k, v, ring] of [[2, sc.instinct, false], [1, sc.intelligence, true]]) {
+        const y = py0 + (k + 1) * bh - 3 - v * (bh - 6), r = small ? 2.4 : 3; hx.beginPath(); if (rect) hx.rect(jx - r, y - r, r * 2, r * 2); else hx.arc(jx, y, r, 0, 6.2832);
+        if (ring) { hx.strokeStyle = c.color; hx.lineWidth = 1.4; hx.stroke(); } else { hx.globalAlpha = 0.85; hx.fillStyle = c.color; hx.fill(); hx.globalAlpha = 1; }
+      }
+    }
+    hx.setLineDash([4, 3]); hx.strokeStyle = '#fff'; hx.globalAlpha = 0.5; if (cx0 !== null) { hx.beginPath(); hx.moveTo(px0 + cx0, py0); hx.lineTo(px0 + cx0, py0 + h); hx.stroke(); } hx.setLineDash([]); hx.globalAlpha = 1;
+    hx.fillStyle = '#7f93a8'; hx.font = (small ? 8 : 10) + 'px system-ui'; hx.textAlign = 'center'; hx.fillText('横：代表温度に揃えて配置（個体の温度は未計算）', px0 + w / 2, py0 + h - 3); hx.textAlign = 'left';
   }
   // Overlay of adaptation ranges. The provider is a PLACEHOLDER (adaptation.js): not linked to genomes or to the simulation.
   function rangeBox(rg, X, Y) { const x1 = X(rg.T[0]), x2 = X(rg.T[1]), y1 = Y(rg.P[0]), y2 = Y(rg.P[1]); if ([x1, x2, y1, y2].some((v) => v === null)) return null; return { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) }; }
@@ -386,7 +432,7 @@
   }
   function drawEnvNote() {
     const st = game.live.stats(), tol = game.series.length ? game.series[game.series.length - 1].traits[3] : null;
-    $('env-note').innerHTML = `<div class="assume"><b>この四角は「表示用の仮定」です。</b>現在の地球の概数を置いたもので、エンジンの値ではありません。白い点線と「基準」は、地球地表の全球平均気温15℃（288.15 K）と1気圧（101325 Pa）。標準は、横＝温度の対数（右が高温）、縦＝圧力の対数（上が低圧、下が高圧）です。地図の上をなぞると移動、2本指（またはホイール）で拡大できます。</div>
+    $('env-note').innerHTML = `<div class="assume"><b>この四角は「表示用の仮定」です。</b>現在の地球の概数を置いたもので、エンジンの値ではありません。白い点線と「基準」は、地球地表の全球平均気温15℃（288.15 K）と1気圧（101325 Pa）。標準は、横＝温度の対数（<b>左が高温、右が低温</b>）、縦＝圧力の対数（上が低圧、下が高圧）です。<b>地上の四角だけは縦軸が圧力ではなく、行動・情報処理の3層</b>です（地上の圧力は内部に残しています）。空中側は宇宙環境、地中側は高温・高圧の地殻深部、水中側は低温・高圧の深海を意識した模式図で、<b>現実の空中・地中・水中の環境は広く重なり合っています</b>。地図の上をなぞると移動、2本指（またはホイール）で拡大できます。</div>
       <p class="note"><b>計算しているもの：</b>4つの領域ごとの個体数と領域間の移動（状況タブ）。領域は食料・獲物・熱ストレス・病気の強さが違うゲーム上の設定です。熱ストレス指標 ${st.thermal.toFixed(2)}（0〜1の無次元量で、温度ではありません）／集団の耐性の平均 ${tol === null ? '-' : tol.toFixed(2)}。<br><b>まだ計算していないもの：</b>温度・圧力・酸素・水分・重力そのもの、生き物ごとの適応範囲（重ね描きと履歴はダミー）。種分化・交雑は後のステージで実装します（いまは未実装です）。</p>`;
   }
   // pan / zoom on the map (per panel when ranges are per realm)
@@ -412,11 +458,75 @@
   hc.addEventListener('wheel', (e) => { e.preventDefault(); applyZoom(e.deltaY > 0 ? 1.15 : 1 / 1.15, e.offsetX, e.offsetY, panelAt(e.offsetX, e.offsetY)); drawHabitat(); saveSettings(); }, { passive: false });
   let envShown = false;
   let logN = -1;
+
+  // ---------- rank (α → Ω), individuals, checkpoints, fast-forward to the next event ----------
+  const RANK_NOTE = 'ランクは、能力の合計や知能の高さではなく、個体が自力で長く生き続ける力から判定する<b>暫定の判定</b>です。判定できる範囲だけを使い、未実装の能力は採点していません。';
+  function drawRankbar() {
+    const rk = game.rank, cur = rk.current, best = rk.best;
+    $('rankbar').innerHTML = `<span class="rk">${cur ? cur.rank : '？'}</span><span>ランク（現在・暫定）　<small>過去最高 <b>${best ? best.rank : '—'}</b>${cur ? '' : '／判定中または個体が少なすぎます'}　Ω：判定未実装</small></span>`;
+  }
+  function tierBar(t) { return '<div class="tierbar">' + [1, 2, 3, 4].map((k) => `<i class="${t !== null && t >= k ? 'on' : ''}"></i>`).join('') + '</div>'; }
+  function fmtVal(a) { if (a.value === null) return a.why || '判定できません'; return a.id === 'efficiency' ? a.value.toFixed(3) : a.id === 'range' ? `${a.value}領域` : a.id === 'competition' ? `${Math.round(a.value).toLocaleString('ja-JP')}ステップ` : a.value.toFixed(a.id === 'repair' ? 3 : 2); }
+  function drawRankTab() {
+    const rk = game.rank, RKs = RKmod();
+    let html = `<p class="note">${RANK_NOTE}</p><div class="rk-big">${rk.current ? rk.current.rank : '？'} <small style="font-size:14px;color:var(--dim)">現在 ／ 過去最高 ${rk.best ? rk.best.rank + `（${rk.best.t.toLocaleString('ja-JP')}ステップ）` : 'なし'}</small></div>`;
+    html += `<p class="note">段階：${RKs.order.map((r) => `<b style="color:${rk.current && rk.current.rank === r ? 'var(--accent)' : rk.best && rk.best.rank === r ? 'var(--ok)' : 'var(--dim)'}">${r}</b>`).join(' → ')} → <b>Ω（判定未実装）</b></p>`;
+    for (const l of rk.lineages) {
+      html += `<div class="evo"><h4>${l.name}（注目系統）　${l.judged ? `ランク <span style="color:var(--accent)">${l.rank}</span>` : ''}</h4>`;
+      if (!l.judged) { html += `<div class="chg na">${l.reason}</div></div>`; continue; }
+      html += `<div class="chg"><b>この判定の理由：</b>${l.reason}</div>`;
+      html += l.missing.length ? `<div class="chg"><b>次（${l.nextRank}）に足りない条件：</b>${l.missing.map((m) => `<div class="miss">・${m}</div>`).join('')}</div>` : (l.nextRank ? '' : '<div class="chg">判定できる範囲の最高に達しています（Ωは判定未実装です）。</div>');
+      html += `<div class="axis"><b>連続生存期間</b>　段階${l.C}／5　<small>最長記録 ${l.metrics.continuity.toLocaleString('ja-JP')}ステップ（${RKs.CONTINUITY.unit}）</small>${tierBar(Math.min(4, l.C))}</div>`;
+      for (const a of l.axes) html += `<div class="axis"><b>${a.name}</b>　${a.tier === null ? '<span class="na">判定できません</span>' : '段階' + a.tier}　<small>${fmtVal(a)}${a.next !== null && a.tier !== null ? `／次の段階：${a.better === 'low' ? '≤' : '≥'}${a.next}` : ''}</small><br><small>${a.unit}</small>${tierBar(a.tier)}</div>`;
+      html += `<div class="axis na">採点していない軸：外部集団・技術への非依存（現在のエンジンでは全個体が自立していて区別できない）／温度・圧力の適応範囲（地図の範囲はダミーのため）／4領域より外の環境。<br>判定の窓：直近約${l.metrics.windowSteps.toLocaleString('ja-JP')}ステップ。能力が落ちると現在のランクは下がることがあります（過去最高は残ります）。</div></div>`;
+    }
+    html += `<p class="note">${RKs.OMEGA.text}</p>`;
+    $('tab-rank').innerHTML = html;
+  }
+  const RKmod = () => (typeof OmegaRank !== 'undefined' ? OmegaRank : null);
+  let selId = null;
+  function drawIndTab() {
+    const top = game.topIndividuals(12), rec = game.records(), cur = top.find((x) => x.id === selId) || top[0]; selId = cur ? cur.id : null;
+    let html = '<p class="note">細胞や器官が入れ替わっても、同じ個体として生き続けていれば年齢（連続生存期間）は続きます。個体ごとの数値は、エンジンが実際に計算している値です。</p><div class="grp">系統ごとの最長記録</div><table class="cmp"><tr><th>系統</th><th>生存中の最長</th><th>これまでの最長記録</th></tr>' + rec.map((r) => `<tr><td>${r.name}</td><td>${r.aliveNow}</td><td>${r.recordAge}</td></tr>`).join('') + '</table><p class="note">単位はステップ（時間尺度は未校正）。</p>';
+    if (cur) {
+      const sc = game.individualScores(cur), act = cur.age ? cur.active / cur.age : 0;
+      html += `<div class="grp">個体を選ぶ（生存中で長生きの順）</div><select id="ind-sel">${top.map((x) => `<option value="${x.id}"${x.id === cur.id ? ' selected' : ''}>#${x.id} ${x.name}／${x.age}ステップ生存${game.cfg.realms ? '／' + E.REALM_DEFS[x.patch].name : ''}</option>`).join('')}</select>` +
+        kv([['個体ID', '#' + cur.id], ['連続生存期間', cur.age.toLocaleString('ja-JP') + ' ステップ'], ['生まれた時刻', cur.born.toLocaleString('ja-JP') + ' ステップ'], ['いる領域', game.cfg.realms ? E.REALM_DEFS[cur.patch].name : '区画' + (cur.patch + 1)], ['いまの行動', MODE_JA[cur.eff] || MODE_JA[cur.mode]],
+          ['損傷の蓄積', cur.damage.toFixed(2) + '（大きいほど死にやすい）'], ['元の細胞の割合', (cur.O * 100).toFixed(0) + '%（入れ替わっていない細胞）'], ['細胞を入れ替えた量', cur.P.toFixed(2) + '（増えるほど更新の効きが落ちる）'], ['活動していた割合', (act * 100).toFixed(0) + '%（残りは休眠）'],
+          ['内部時間（代謝に応じた老化の時計）', cur.internal.toFixed(1)], ['エネルギー', cur.energy.toFixed(2)], ['狩り／捕獲', `${cur.hunts}／${cur.catches}`], ['感染した回数', cur.infections], ['記憶（元の細胞にある分）', cur.M.toFixed(2)], ['生んだ子の数', cur.births],
+          ['生存本能の指標（計算済み）', sc.instinct.toFixed(2)], ['個体知能の指標（計算済み）', sc.intelligence.toFixed(2)], ['社会的知性', '未計算']]) +
+        '<p class="note">個体内のゲノム変化（体細胞の変化）と、子に伝わる遺伝的な進化は区別して扱います。体細胞のゲノム変化はまだ実装していません。</p>';
+    }
+    $('tab-ind').innerHTML = html; const sel = $('ind-sel'); if (sel) sel.onchange = () => { selId = Number(sel.value); drawIndTab(); };
+  }
+  // checkpoint: a pause with a choice. No fixed end: the world and the ecosystem stay as they are when you continue.
+  let cpShown = false;
+  function showCheckpoint() {
+    const c = game.checkpoint; if (!c || cpShown) return; cpShown = true; playing = false; skipping = null; setPP(); putSave('auto');
+    const ti = game.timeInfo(), card = $('modal-card'), rk = game.rank, st = game.live.stats(); card.className = 'card cpmodal';
+    card.innerHTML = `<h3>${c.kind === 'focus-extinct' ? 'あなたが選んだ系統が絶えました' : '節目'}</h3><p class="note">${c.kind === 'focus-extinct' ? '敗北条件はまだ実装していません。観察は続けられます（競争相手や背景の生き物は、そのまま続きます）。' : `${ti.steps.toLocaleString('ja-JP')}ステップ（${game.historyInfo() ? 'K–Pg境界から約' + game.historyInfo().yearsSinceImpact.toFixed(0) + '年・仮定' : TM.format(ti.steps, assume) + '・仮定'}）に達しました。ここまでの様子を確認して、続けるか選べます。`}</p><p>累積世代 ${Math.round(ti.generations).toLocaleString('ja-JP')}／個体数 ${st.population}／ランク 現在 ${rk.current ? rk.current.rank : '—'}・過去最高 ${rk.best ? rk.best.rank : '—'}（暫定）</p>`;
+    const mk = (t, f, cls) => { const b = document.createElement('button'); b.className = 'btn big ' + (cls || ''); b.textContent = t; b.onclick = f; card.appendChild(b); };
+    mk('続行する（生命と生態系はそのまま）', () => { game.continueFromCheckpoint(); cpShown = false; card.className = 'card'; $('modal').hidden = true; playing = true; setPP(); }, 'primary');
+    mk('保存する', () => { toast(putSave('s1', null) ? 'スロット1に保存しました' : '保存できませんでした'); });
+    mk('最初からやり直す', () => { if (!confirm('いまの世界は失われます（自動保存は残ります）。最初からやり直しますか？')) return; putSave('auto'); cpShown = false; card.className = 'card'; game = null; playing = false; $('modal').hidden = true; $('play').hidden = true; $('start').hidden = false; renderStart(); });
+    $('modal').hidden = false;
+  }
+  // fast-forward to the next notable event (at most MAX_SKIP steps), then stop and show what happened
+  let skipping = null; const STOP_KINDS = new Set(['lineage', 'dominance', 'collapse', 'crisis', 'rank', 'background', 'branch', 'trait']), MAX_SKIP = 30000;
+  function startSkip() { if (!game || game.pending || game.checkpoint || game.isOver || loading) return; if (skipping) { stopSkip(true); return; } skipping = { t0: game.t, n0: game.events.length }; playing = true; setPP(); $('skip').textContent = '■ 早送りを止める'; }
+  function stopSkip(manual) {
+    if (!skipping) return; const sk = skipping; skipping = null; $('skip').textContent = '⏭ 次の出来事まで早送り'; $('skipnote').textContent = ''; playing = false; setPP();
+    if (game.pending || game.checkpoint) return; const ev = game.events.slice(sk.n0).filter((e) => e.kind !== 'disaster');
+    const card = $('modal-card'); card.className = 'card'; card.innerHTML = `<h3>${manual ? '早送りを止めました' : ev.some((e) => STOP_KINDS.has(e.kind)) ? '出来事がありました' : `${MAX_SKIP.toLocaleString('ja-JP')}ステップ進めましたが、目立った出来事はありませんでした`}</h3><p class="note">${(game.t - sk.t0).toLocaleString('ja-JP')}ステップ進みました。</p>` + (ev.length ? ev.slice(-12).map((e) => `<div class="ev ${e.kind}"><small>${e.t.toLocaleString('ja-JP')}ステップ</small>${e.text}</div>`).join('') : '');
+    const b = document.createElement('button'); b.className = 'btn primary big'; b.textContent = '確認した（閉じる）'; b.onclick = () => { $('modal').hidden = true; draw(true); }; card.appendChild(b); $('modal').hidden = false; draw(true);
+  }
+  $('skip').onclick = () => startSkip();
+
   function draw(force) {
     if (!game) return; const st = game.live.stats();
-    const ti = game.timeInfo(); $('h-t').textContent = st.t; $('h-gen').textContent = ti.generations.toFixed(1); $('h-pop').textContent = st.population; drawTimeline(ti);
-    drawWorld(st); drawLinbar(); drawBackground();
-    if (tab === 'stat') drawStat(st); else if (tab === 'trait' && (force || st.t % 25 === 0)) drawTrait(); else if (tab === 'graph' && (force || st.t % 25 === 0)) drawChart(); else if (tab === 'env') { if (force || !envShown) { renderEnvControls(); drawHabitat(); drawEnvNote(); envShown = true; lastEnvT = st.t; } else if (st.t - lastEnvT >= 25) { drawEnvNote(); if (ov !== 'none') drawHabitat(); lastEnvT = st.t; } } else if (tab === 'log' && (force || logN !== game.events.length)) { drawLog(); logN = game.events.length; }
+    const ti = game.timeInfo(); $('h-t').textContent = TM.format(ti.steps, game.historyInfo() ? 'day' : assume).replace('約', ''); $('h-gen').textContent = Math.round(ti.generations).toLocaleString('ja-JP'); $('h-pop').textContent = st.population; drawTimeline(ti);
+    drawWorld(st); drawRankbar(); drawLinbar(); drawBackground();
+    if (tab === 'stat') drawStat(st); else if (tab === 'ind' && (force || st.t % 25 === 0)) drawIndTab(); else if (tab === 'rank' && (force || st.t % 25 === 0)) drawRankTab(); else if (tab === 'trait' && (force || st.t % 25 === 0)) drawTrait(); else if (tab === 'graph' && (force || st.t % 25 === 0)) drawChart(); else if (tab === 'env') { if (force || !envShown) { renderEnvControls(); drawHabitat(); drawEnvNote(); envShown = true; lastEnvT = st.t; } else if (st.t - lastEnvT >= 25) { drawEnvNote(); if (ov !== 'none') drawHabitat(); lastEnvT = st.t; } } else if (tab === 'log' && (force || logN !== game.events.length)) { drawLog(); logN = game.events.length; }
   }
 
   document.addEventListener('visibilitychange', () => { if (document.hidden && game) { putSave('auto'); } });

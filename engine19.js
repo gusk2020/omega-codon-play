@@ -160,6 +160,7 @@
     storageEvolvable: false, storageCost: 0, memoryBenefit: true, lineageCount: 1,
     storageSupply: 1, storageEffectScale: 1, infection: null, infectionSeverity: 1, preyRefuge: 0, preyScale: 1, fecundityLocked: false,
     birthScale: 1, captureScale: 1, preyGrowthScale: 1, preyHidden: 0, preyInflow: 0, live: false,
+    continueWhenEmpty: false, // live mode: keep stepping when the arena is empty (the game layer may bring individuals back from outside)
     founderCounts: null, // null = `founders` split evenly over `lineageCount`; an array gives each lineage its own starting count (zero allowed: a lineage slot kept for later introduction)
     niche: null, // null = every individual draws on the same plant food; {slots, weights:[per lineage][per slot]} partitions that food into separate resources
     realms: null, // null = the original undivided patches (bit-identical to Stage 1.7); true or {…} = the four habitat realms below
@@ -380,7 +381,7 @@
     const baseEnv = ENVIRONMENTS[o.environment];
     if (!baseEnv) throw new Error('unknown environment: ' + o.environment);
     const env = { ...baseEnv, resource: baseEnv.resource * o.resourceScale, prey: baseEnv.prey * o.resourceScale * o.preyScale };
-    o.steps = clamp(Math.floor(o.steps), 0, 100000);
+    o.steps = clamp(Math.floor(o.steps), 0, o.live ? 1e9 : 100000); // live mode has no fixed end; the game layer decides when to pause
     o.founders = clamp(Math.floor(o.founders), 0, o.maxPopulation);
     o.patches = clamp(Math.floor(o.patches), 1, 32);
     if (o.founderCounts) o.lineageCount = o.founderCounts.length;
@@ -423,7 +424,7 @@
     const envMod = { resource: 1, thermal: 0, pathogen: 1 }; // external conditions set by a scenario (live mode); neutral by default
     const NICHE = o.niche ? { S: o.niche.slots, w: o.niche.weights, bonus: o.niche.specialistBonus || 0 } : null; // bonus: digestive efficiency on a food rises with how much of the diet it is (a generalist gets factor 1 everywhere)
     const NLN = o.lineageCount, zeros = () => new Array(NLN).fill(0);
-    const lstat = { births: zeros(), deaths: zeros(), lifeSum: zeros(), intake: zeros(), catches: zeros(), immigrants: zeros(), causes: Array.from({ length: NLN }, () => ({})) };
+    const HB = 40, lstat = { hAt: Array.from({ length: o.lineageCount }, () => new Array(HB).fill(0)), hDe: Array.from({ length: o.lineageCount }, () => new Array(HB).fill(0)), dmgIn: zeros(), dmgOut: zeros(), spent: zeros(), dormEnter: zeros(), dormWake: zeros(), dormDeaths: zeros(), maxAgeDead: zeros(), births: zeros(), deaths: zeros(), lifeSum: zeros(), intake: zeros(), catches: zeros(), immigrants: zeros(), causes: Array.from({ length: NLN }, () => ({})) };
     if (NICHE) for (const p of patches) p.slotDemand = new Array(NICHE.S).fill(0);
     const moves = RM ? REALM_DEFS.map(() => REALM_DEFS.map(() => 0)) : null;
     const PR = o.pathogenRegime, BR = o.breedingRegime, RR = o.resourceRegime, TR = o.thermalRegime;
@@ -438,7 +439,7 @@
     const decisions = { tp: 0, fp: 0, fn: 0, tn: 0 }, sensing = { cueWhenAbsent: 0, absent: 0, missWhenPresent: 0, present: 0 };
     const modeSteps = new Array(NM + 1).fill(0);
     let disasters = 0, envSignature = 0, huntSteps = 0, huntEncounters = 0, catches = 0, totalBirths = 0, extinctAt = null, capHit = false, switches = 0;
-    const popTrace = new Int32Array(o.steps + 1), birthTrace = new Int32Array(o.steps + 1);
+    const traceLen = Math.min(o.steps, 100000) + 1, popTrace = new Int32Array(traceLen), birthTrace = new Int32Array(traceLen); // live runs keep traces for the first 100000 steps only (writes beyond are ignored)
     const LT = o.lineageCount > 1, linExtinctAt = new Array(o.lineageCount).fill(null);
     popTrace[0] = pop.length;
     const history = [];
@@ -463,7 +464,7 @@
     sample(0);
 
     const stepOnce = (t) => {
-      if (pop.length === 0) { if (extinctAt === null) extinctAt = t - 1; return false; }
+      if (pop.length === 0 && !o.continueWhenEmpty) { if (extinctAt === null) extinctAt = t - 1; return false; }
 
       if (PR) { // epidemic waves
         const phase = t % PR.interval;
@@ -511,7 +512,7 @@
           const d = decide(g.edges, input, o.switching, score, x.mode, lo[L.switchThreshold]);
           x.eff = x.mode;
           if (d !== x.mode) {
-            switches++;
+            switches++; if (d === M_DORMANT) lstat.dormEnter[x.lin]++; if (x.mode === M_DORMANT) lstat.dormWake[x.lin]++;
             x.switchCost = SWITCH_COST * metab;
             if (x.mode === M_DORMANT) { // waking takes time; deeper dormancy is slower
               x.arousal = Math.round((0.5 - lo[L.dormancyDepth]) * 6); x.pending = d;
@@ -561,7 +562,7 @@
               if (o.memory) x.M += lo[L.memoryLearn] * (x.O - x.M) * 0.2;
             }
           }
-          if (rand() < 0.3) { const inj = 0.05 * env.injury * (1 - 0.5 * lo[L.tolerance]); x.damage += inj; x.dmgSrc[4] += inj; }
+          if (rand() < 0.3) { const inj = 0.05 * env.injury * (1 - 0.5 * lo[L.tolerance]); x.damage += inj; lstat.dmgIn[x.lin] += inj; x.dmgSrc[4] += inj; }
         }
         const locusCost = 0.03 * lo[L.movement] + 0.04 * lo[L.predation] + 0.05 * lo[L.tolerance] + 0.06 * lo[L.immune]
           + 0.05 * ((0.5 - lo[L.falsePositive]) + (0.5 - lo[L.falseNegative])) / 0.48 + x.gcost;
@@ -576,7 +577,7 @@
         const cost = base + memCost + regenCost + huntCost + x.switchCost + x.acclimCost + storCost;
         spentBy.acclimation += x.acclimCost; spentBy.storage += storCost;
         spentBy.base += base; spentBy.memory += memCost; spentBy.regeneration += regenCost; spentBy.hunting += huntCost; spentBy.switching += x.switchCost;
-        ledger.spent += cost;
+        ledger.spent += cost; lstat.spent[x.lin] += cost;
         x.energy += gain - cost;
 
         // infection (exposure depends on mode)
@@ -623,9 +624,10 @@
         const th = 0.12 * p.thermal * (1 - lo[L.tolerance]) * shelter;
         const pa = 0.08 * x.load * o.infectionSeverity;
         const di = p.hit * (1 - 0.6 * lo[L.tolerance]) * shelter;
-        x.damage += sen + th + pa + di;
+        x.damage += sen + th + pa + di; lstat.dmgIn[x.lin] += sen + th + pa + di;
         x.dmgSrc[0] += sen; x.dmgSrc[1] += th; x.dmgSrc[2] += pa; x.dmgSrc[3] += di;
         // regeneration: repair keeps original cells; replacement swaps them for blank ones
+        { const removed = 0.15 * fix + 0.35 * rep * eff; lstat.dmgOut[x.lin] += Math.min(removed, Math.max(0, x.damage)); }
         x.damage -= 0.15 * fix + 0.35 * rep * eff;
         const Oold = x.O;
         x.O *= 1 - 0.25 * rep * eff;
@@ -644,12 +646,14 @@
         const hz = { extrinsic: o.extrinsicMortality, damage: 0.3 * x.damage * x.damage, starvation: 0 };
         if (x.energy < 0) { ledger.deficit += -x.energy; x.energy = 0; hz.starvation = 0.25; }
         if (x.energy > x.cap) { ledger.overflow += x.energy - x.cap; x.energy = x.cap; }
+        const hb = Math.min(HB - 1, Math.floor(x.age / 25)); lstat.hAt[x.lin][hb]++;
         x.age++;
         if (mode !== M_DORMANT) x.active++;
         const hazard = hz.extrinsic + hz.damage + hz.starvation;
         if (rand() < 1 - Math.exp(-hazard)) {
           let cause = hz.starvation >= hz.damage && hz.starvation >= hz.extrinsic ? 'starvation' : hz.extrinsic >= hz.damage ? 'extrinsic' : null;
           if (!cause) { let b = 0; for (let k = 1; k < 5; k++) if (x.dmgSrc[k] > x.dmgSrc[b]) b = k; cause = DAMAGE_SOURCES[b]; }
+          lstat.hDe[x.lin][hb]++; if (mode === M_DORMANT) lstat.dormDeaths[x.lin]++; if (x.age > lstat.maxAgeDead[x.lin]) lstat.maxAgeDead[x.lin] = x.age;
           causes[cause]++; lstat.deaths[x.lin]++; lstat.lifeSum[x.lin] += x.age; lstat.causes[x.lin][cause] = (lstat.causes[x.lin][cause] || 0) + 1;
           ledger.lostAtDeath += x.energy;
           lifeSumRun += x.age; deaths.push([x.age, x.active, x.internal, x.births, x.O, x.Mpeak > 0 ? x.M / x.Mpeak : null, x.hunts, x.catches, x.imPeak > 0 ? x.imS / x.imPeak : null, x.infections, x.imPeak]);
@@ -666,7 +670,7 @@
           // Realm movement: only while exploring, only with a reserve, success odds scale with the movement trait, adjacent realms only.
           if (mode === M_EXPLORE && x.energy > RM.reserve && rand() < RM.rate * lo[L.movement]) {
             const adj = REALM_ADJ[x.patch], dest = adj[Math.floor(rand() * adj.length)], cost = RM.cost * REALM_DIFF[x.patch][dest];
-            if (x.energy >= cost + RM.reserve) { x.energy -= cost; ledger.spent += cost; spentBy.moving = (spentBy.moving || 0) + cost; moves[x.patch][dest]++; x.patch = dest; }
+            if (x.energy >= cost + RM.reserve) { x.energy -= cost; ledger.spent += cost; lstat.spent[x.lin] += cost; spentBy.moving = (spentBy.moving || 0) + cost; moves[x.patch][dest]++; x.patch = dest; }
           }
         } else if (rand() < o.migrationRate * 0.25) x.patch = Math.floor(rand() * o.patches);
         next.push(x);
@@ -687,10 +691,14 @@
       let tNow = 0, finished = false;
       const live = {
         get t() { return tNow; }, get done() { return finished; }, options: o, env,
-        step(n = 1) { for (let i = 0; i < n && !finished; i++) { tNow++; if (!stepOnce(tNow) || tNow >= o.steps || pop.length === 0) finished = true; } return tNow; },
+        step(n = 1) { for (let i = 0; i < n && !finished; i++) { tNow++; if (!stepOnce(tNow) || tNow >= o.steps || (pop.length === 0 && !o.continueWhenEmpty)) finished = true; } return tNow; },
         setOption(name, value) { o[name] = value; if (name === 'preyHidden') for (const p of patches) p.hid = value * p.preyCap; },
         disaster(strength = 1.2) { pendingDisaster = strength; },
         patchState() { return patches.map((p) => ({ resource: p.resource, thermal: p.thermal, pathogen: p.pathogen, prey: p.prey, preyCap: p.preyCap })); },
+        lineageDetail() { // read-only bookkeeping for the game layer (hazard by age, damage in/out, dormancy, spending)
+          const alive = zeros(), aliveMaxAge = zeros(); for (const x of pop) { alive[x.lin]++; if (x.age > aliveMaxAge[x.lin]) aliveMaxAge[x.lin] = x.age; }
+          return Array.from({ length: NLN }, (_, i) => ({ alive: alive[i], aliveMaxAge: aliveMaxAge[i], maxAgeDead: lstat.maxAgeDead[i], hAt: lstat.hAt[i].slice(), hDe: lstat.hDe[i].slice(), binWidth: 25, dmgIn: lstat.dmgIn[i], dmgOut: lstat.dmgOut[i], spent: lstat.spent[i], dormEnter: lstat.dormEnter[i], dormWake: lstat.dormWake[i], dormDeaths: lstat.dormDeaths[i] }));
+        },
         introduce(lineage, genome, n, realm) { // individuals arriving from outside the arena; their energy is booked as starting energy so the ledger still closes
           let made = 0; for (let i = 0; i < n && pop.length < o.maxPopulation; i++) { const x = newborn(cloneGenome(genome), RM ? realm : realm % o.patches, 1.0, lineage); pop.push(x); ledger.start += x.energy; lstat.immigrants[lineage]++; made++; } return made;
         },
@@ -706,7 +714,7 @@
             modes: (() => { const m = new Array(NM + 1).fill(0); for (const x of pop) m[x.mode]++; return m; })(),
             meanEnergy: pop.length ? pop.reduce((a, x) => a + x.energy, 0) / pop.length : 0, meanAge: pop.length ? pop.reduce((a, x) => a + x.age, 0) / pop.length : 0 };
         },
-        individuals() { return pop.map((x) => ({ id: x.id, lin: x.lin, age: x.age, energy: x.energy, mode: x.mode, patch: x.patch, damage: x.damage, births: x.births, catches: x.catches, hunts: x.hunts, traits: x.ph, genes: x.genome.genes.length })); },
+        individuals() { return pop.map((x) => ({ id: x.id, lin: x.lin, age: x.age, energy: x.energy, mode: x.mode, patch: x.patch, damage: x.damage, births: x.births, catches: x.catches, hunts: x.hunts, O: x.O, P: x.P, active: x.active, internal: x.internal, M: x.M, load: x.load, infections: x.infections, eff: x.eff, traits: x.ph, genes: x.genome.genes.length })); },
         traitMeans, result: () => buildResult(),
       };
       return live;

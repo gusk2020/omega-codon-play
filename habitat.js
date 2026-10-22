@@ -77,12 +77,12 @@
     if (!(hi > lo)) hi = lo + (scale === 'log' ? lo : 1);
     return [lo, hi];
   }
-  // Standard view (Stage 1.9C): x = temperature on a log axis in kelvin (right = hotter), y = absolute pressure on a log axis with LOW pressure
+  // Standard view (Stage 1.9D): x = temperature on a log axis in kelvin with HOT on the LEFT and cold on the right, y = absolute pressure on a log axis with LOW pressure
   // at the top and HIGH at the bottom. Ranges are per realm by default ('per'); 'common' uses one shared range for every panel.
   const REALM_IDS = ['water', 'land', 'underground', 'air'];
   const realmById = (id) => REALMS.find((r) => r.id === id);
   function defaultView() {
-    const v = { split: true, xUnit: 'K', xScale: 'log', yScale: 'log', xRev: false, yRev: true, rangeMode: 'per', xr: autoRange('x', 'log'), yr: autoRange('y', 'log'), pr: {} };
+    const v = { split: true, xUnit: 'K', xScale: 'log', yScale: 'log', xRev: true, yRev: true, rangeMode: 'per', xr: autoRange('x', 'log'), yr: autoRange('y', 'log'), pr: {} };
     v.pr = autoPanels(v); return v;
   }
   function autoPanels(v) { const o = {}; for (const r of REALMS) o[r.id] = { xr: autoRange('x', v.xScale, [r]), yr: autoRange('y', v.yScale, [r]) }; return o; }

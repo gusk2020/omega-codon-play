@@ -3,6 +3,7 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
   const NODE = typeof module === 'object' && typeof require === 'function';
+  const RK = NODE ? require('./rank') : globalThis.OmegaRank;
   const HIST = NODE ? require('./earthhistory') : globalThis.OmegaHistory, BG = NODE ? require('./background') : globalThis.OmegaBackground, AD = NODE ? require('./adaptation') : globalThis.OmegaAdaptation;
   // The game layer. It owns no science: it picks founders, advances the Stage 1.7 engine, notices notable things, and offers the
   // player a small number of environment-wide interventions. Nothing here favours a lineage or a trait.
@@ -44,7 +45,9 @@
     ['falseNegative', '感覚の見逃し', '見逃しが増えた', '見逃しが減った'],
     ['switchThreshold', '行動の切り替えにくさ', '行動を切り替えにくくなった', '行動を切り替えやすくなった'],
   ];
-  const IMPORTANT = new Set(['branch', 'disaster', 'crisis', 'lineage', 'scenario', 'immigration', 'player']);
+  const IMPORTANT = new Set(['branch', 'disaster', 'crisis', 'lineage', 'scenario', 'immigration', 'player', 'rank']);
+  // Pauses with a choice (continue / save / start over): the first at the old fixed end (100000 steps), then at regular intervals. There is no fixed end any more.
+  const CHECKPOINT = { first: 100000, every: 50000 };
   // Cognition index: a display composite (0..1) of learning, memory upkeep, sensing accuracy and behavioural flexibility.
   // It is NOT a measurement of intelligence, and says nothing about sharing, society or culture, which the engine does not model.
   function cognitionIndex(get) {
@@ -103,11 +106,11 @@
     const environment = cfg.environment || 'steady', envDef = ENVIRONMENTS.find((e) => e.id === environment);
     if (!envDef) throw new Error('unknown environment');
     const counts = creatures.map(() => 0); if (v2) { const n = initialIdx.length, per = Math.floor(100 / n); initialIdx.forEach((li, k) => { counts[li] = per + (k < 100 - per * n ? 1 : 0); }); }
-    const live = E.simulate({ seed: cfg.seed, steps: 100000, environment: envDef.engine, resourceRegime: envDef.regime, founders: 100, lineageCount: creatures.length,
+    const live = E.simulate({ seed: cfg.seed, steps: 1e9, continueWhenEmpty: v2, environment: envDef.engine, resourceRegime: envDef.regime, founders: 100, lineageCount: creatures.length,
       founderGenomes: creatures.map((c, i) => genomeOf(i)), sampleEvery: 100, live: true,
       ...(v2 ? { founderCounts: counts, niche: { slots: NICHE_SLOTS, weights: creatures.map((c) => c.niche), specialistBonus: NICHE_BONUS } } : {}),
       realms: realmsOn ? { startByLineage: creatures.map((c) => c.startRealm) } : null });
-    const game = { cfg: { creatures: focus.map((c) => c.id), rivals: rivalDefs.map((c) => c.id), seed: cfg.seed, environment, realms: realmsOn, scenario, ecology: v2 ? 'v2' : 'legacy', ...(v2 && cfg.background === false ? { background: false } : {}) }, creatures, v2, focusCount: focus.length, roleOf, autoContinuous: false, live, events: [], series: [], pending: null, effects: [], log: [], replayTo: null };
+    const game = { cfg: { creatures: focus.map((c) => c.id), rivals: rivalDefs.map((c) => c.id), seed: cfg.seed, environment, realms: realmsOn, scenario, ecology: v2 ? 'v2' : 'legacy', ...(v2 && cfg.background === false ? { background: false } : {}), ...(cfg.checkpoint ? { checkpoint: cfg.checkpoint } : {}) }, creatures, v2, focusCount: focus.length, roleOf, autoContinuous: false, live, events: [], series: [], pending: null, effects: [], log: [], replayTo: null };
     const extinctAt = new Array(creatures.length).fill(null);
     const lti = KEY_TRAITS.map((n) => E.TRAITS.findIndex((l) => l[0] === n));
     let replayLog = saved ? saved.log.map((e) => ({ ...e })) : null, replayPtr = 0;
@@ -226,6 +229,56 @@
 
     record();
 
+    // ---- Stage 1.9D: individual-centred records, the alpha-to-Omega rank, checkpoints. Read-only observation of the engine. ----
+    const cp = { first: cfg.checkpoint?.first ?? CHECKPOINT.first, every: cfg.checkpoint?.every ?? CHECKPOINT.every };
+    let nextCp = cp.first, focusExtinctLogged = false;
+    game.checkpoint = null; game.over = false;
+    const isOver = () => (v2 ? game.over : live.done);
+    const legacyReplay = () => !!saved && (saved.v || 1) < 5 && game.replayTo !== null; // saves from Stages 1.8-1.9C have no checkpoints in their logs
+    const dsnaps = []; // lineage detail on a 100-step grid, for windowed measures
+    const WINDOW = 5000;
+    const recordAge = creatures.map(() => ({ age: 0, id: null, t: 0 })), streak = creatures.map(() => 0), firstSeen = creatures.map(() => null);
+    game.rank = { lineages: [], current: null, best: null, history: [] };
+    function metricsFor(i, st, det) {
+      const now = det[i], ref = dsnaps.find((x) => x.t >= st.t - WINDOW) || dsnaps[0];
+      const base = ref && ref.t < st.t ? ref.detail[i] : null, bs = ref && ref.t < st.t ? ref.stats[i] : null;
+      const diff = (a, b) => a.map((v, k) => v - (b ? b[k] : 0)), sum = (a, x, y) => a.slice(x, y).reduce((p, q) => p + q, 0);
+      const hAt = diff(now.hAt, base && base.hAt), hDe = diff(now.hDe, base && base.hDe), youngAt = sum(hAt, 1, 2), oldAt = sum(hAt, 3, 40);
+      const young = youngAt ? sum(hDe, 1, 2) / youngAt : null, old = oldAt ? sum(hDe, 3, 40) / oldAt : null;
+      const dIn = now.dmgIn - (base ? base.dmgIn : 0), dOut = now.dmgOut - (base ? base.dmgOut : 0), spent = now.spent - (base ? base.spent : 0), indSteps = sum(hAt, 0, 40);
+      const intake = st.lineageStats[i].intake - (bs ? bs.intake : 0), wake = now.dormWake - (base ? base.dormWake : 0), dd = now.dormDeaths - (base ? base.dormDeaths : 0);
+      return { alive: now.alive, observedSteps: firstSeen[i] === null ? 0 : st.t - firstSeen[i], continuity: Math.max(recordAge[i].age, now.maxAgeDead),
+        aging: { value: young && old !== null && young > 0 ? old / young : null, young: youngAt, old: oldAt, youngRate: young, oldRate: old },
+        repair: { value: dIn > 0 ? dOut / dIn : null }, efficiency: { value: indSteps > 0 ? spent / indSteps : null, intakeRatio: spent > 0 ? intake / spent : 0 },
+        range: { value: st.realmAlive ? st.realmAlive.filter((r) => r[i] >= 5).length : 1 }, dormancy: { value: wake + dd > 0 ? wake / (wake + dd) : null, episodes: wake + dd }, competition: { value: streak[i] }, windowSteps: ref ? st.t - ref.t : 0 };
+    }
+    function rankStep(st) {
+      const det = live.lineageDetail(), ind = live.individuals(), dt = DETECT_EVERY;
+      for (const x of ind) if (x.age > recordAge[x.lin].age) recordAge[x.lin] = { age: x.age, id: x.id, t: st.t };
+      for (let i = 0; i < creatures.length; i++) {
+        if (st.lineageAlive[i] > 0 && firstSeen[i] === null) firstSeen[i] = st.t;
+        const comp = st.lineageAlive.some((n, k) => k !== i && n >= 20);
+        if (st.lineageAlive[i] < 5) streak[i] = 0; else if (comp) streak[i] += dt;
+      }
+      const out = [];
+      for (let i = 0; i < creatures.length; i++) if (roleOf(i) === 'focus') { const m = metricsFor(i, st, det), r = RK.evaluate(m); out.push({ lin: i, name: creatures[i].name, metrics: m, ...r }); }
+      if (st.t % 100 === 0) dsnaps.push({ t: st.t, detail: det, stats: st.lineageStats }), dsnaps.length > 60 && dsnaps.shift();
+      game.rank.lineages = out;
+      const judged = out.filter((o) => o.judged), cur = judged.length ? judged.reduce((a, b) => (b.rankIndex > a.rankIndex ? b : a)) : null, prev = game.rank.current;
+      game.rank.current = cur ? { rank: cur.rank, rankIndex: cur.rankIndex, lin: cur.lin } : null;
+      if (cur && (!game.rank.best || cur.rankIndex > game.rank.best.rankIndex)) { game.rank.best = { rank: cur.rank, rankIndex: cur.rankIndex, t: st.t, lin: cur.lin, reason: cur.reason }; if (v2 && cur.rankIndex > 0) addEvent('rank', `最高ランクを更新：${cur.rank}（${cur.name}）。${cur.reason}`); }
+      else if (v2 && prev && cur && cur.rankIndex !== prev.rankIndex) addEvent('rank', `ランクが${prev.rank}から${cur.rank}に${cur.rankIndex > prev.rankIndex ? '上がった' : '下がった'}（${cur.name}）。※過去の最高は${game.rank.best.rank}のまま記録されています`);
+      if (cur && (!game.rank.history.length || game.rank.history[game.rank.history.length - 1].rank !== cur.rank)) game.rank.history.push({ t: st.t, rank: cur.rank });
+      if (v2 && !focusExtinctLogged && focusIdx.length && focusIdx.every((li) => peakLin[li] >= 5 && st.lineageAlive[li] === 0)) { focusExtinctLogged = true; if (legacyReplay()) { /* a save from before this pause existed: the run went on, so replay goes on */ } else { if (!game.checkpoint) game.checkpoint = { t: st.t, kind: 'focus-extinct' }; addEvent('lineage', 'あなたが選んだ系統がすべて絶えました（敗北条件は未実装。観察は続けられます）'); } }
+      if (v2) { const bgAlive = bg && BG.summary(bg).some((g) => !g.extinct); if (st.population === 0 && !bgAlive) game.over = true; }
+    }
+    game.topIndividuals = (n = 5) => live.individuals().sort((a, b) => b.age - a.age).slice(0, n).map((x) => ({ ...x, born: live.t - x.age, name: creatures[x.lin].name, role: roleOf(x.lin) }));
+    game.records = () => creatures.map((c, i) => ({ lin: i, name: c.name, role: roleOf(i), recordAge: Math.max(recordAge[i].age, live.lineageDetail()[i].maxAgeDead), holder: recordAge[i].id, aliveNow: live.lineageDetail()[i].aliveMaxAge })).filter((r, i) => !v2 || ever[i]);
+    game.continueFromCheckpoint = () => { if (!game.checkpoint) return false; game.log.push({ t: live.t, kind: 'continue' }); if (game.checkpoint.kind === 'interval') nextCp += cp.every; game.checkpoint = null; return true; };
+    game.individualScores = (x) => { const g = (n) => x.traits[E.TRAITS.findIndex((l) => l[0] === n)], nz = (v, lo, hi) => Math.min(1, Math.max(0, (v - lo) / (hi - lo)));
+      return { instinct: (g('predation') + g('movement') + (1 - nz(g('falsePositive'), 0.02, 0.5)) + (1 - nz(g('falseNegative'), 0.02, 0.5))) / 4, intelligence: cognitionIndex(g) }; };
+    Object.defineProperty(game, 'isOver', { get: () => isOver() });
+
     function detect() {
       const st = live.stats(), total = st.population; updateClock(st);
       if (v2) for (let i = 0; i < creatures.length; i++) { peakLin[i] = Math.max(peakLin[i], st.lineageAlive[i]); for (let r = 0; r < 4; r++) peakRealm[i][r] = Math.max(peakRealm[i][r], st.realmAlive[r][i]); }
@@ -243,7 +296,8 @@
         if (Math.abs(shift) >= 0.1 && !last.traitFlag[key + Math.sign(shift)]) { last.traitFlag[key + Math.sign(shift)] = true; addEvent('trait', `${TRAIT_JA[key]}が${shift > 0 ? '上がり' : '下がり'}始めた（${last.traits[i].toFixed(2)}→${tm[i].toFixed(2)}）`); }
       }
       record();
-      if (!game.pending && st.t >= FIRST_BRANCH && st.t - last.branchT >= MIN_BRANCH_GAP && total > 0 && !live.done) {
+      rankStep(st);
+      if (!game.pending && st.t >= FIRST_BRANCH && st.t - last.branchT >= MIN_BRANCH_GAP && total > 0 && !isOver()) {
         let why = null;
         if (total < 40 && total < 0.35 * last.peak) why = { kind: 'crisis', title: '存続の危機', text: `個体数が${total}体まで減った（最大${last.peak}体）。` };
         else if (total >= 250 && total >= 2.5 * last.popAtBranch) why = { kind: 'boom', title: '個体数の急増', text: `個体数が${total}体に増えた。資源が足りなくなるかもしれない。` };
@@ -292,6 +346,7 @@
     const nextStop = (limit) => {
       let stop = Math.min(limit, (Math.floor(live.t / DETECT_EVERY) + 1) * DETECT_EVERY);
       for (const e of game.effects) if (e.until > live.t) stop = Math.min(stop, e.until);
+      if (nextCp > live.t) stop = Math.min(stop, nextCp);
       if (replayLog) for (let i = replayPtr; i < replayLog.length; i++) if (replayLog[i].t > live.t) { stop = Math.min(stop, replayLog[i].t); break; }
       return stop;
     };
@@ -299,10 +354,12 @@
       expire();
       if (live.t % DETECT_EVERY === 0) { updateScenario(); bgTick(); }
       if (live.t % DETECT_EVERY === 0 || live.done) detect();
+      if (live.t === nextCp && !game.checkpoint) { if (legacyReplay()) nextCp += cp.every; else game.checkpoint = { t: live.t, kind: 'interval' }; }
       if (replayLog) {
         while (replayPtr < replayLog.length && replayLog[replayPtr].t === live.t) {
           const e = replayLog[replayPtr++];
-          if (e.kind === 'choice') { if (game.pending) { game.log.push({ ...e }); game.pending = null; resolveBranch(); applyEffect(e.id, e.r); } } else { game.log.push({ ...e }); applyEffect(e.kind); }
+          if (e.kind === 'continue') { if (game.checkpoint) { game.log.push({ ...e }); if (game.checkpoint.kind === 'interval') nextCp += cp.every; game.checkpoint = null; } }
+          else if (e.kind === 'choice') { if (game.pending) { game.log.push({ ...e }); game.pending = null; resolveBranch(); applyEffect(e.id, e.r); } } else { game.log.push({ ...e }); applyEffect(e.kind); }
         }
         if (replayPtr >= replayLog.length && game.replayTo !== null && live.t >= game.replayTo) { replayLog = null; game.replayTo = null; restoreAuto(); }
       }
@@ -310,16 +367,16 @@
     game.advance = (n) => {
       let limit = live.t + n; if (game.replayTo !== null) limit = Math.min(limit, game.replayTo);
       let guard = 0;
-      while (live.t < limit && !live.done && !game.pending && guard++ < 100000) {
+      while (live.t < limit && !isOver() && !game.pending && !game.checkpoint && guard++ < 100000) {
         const target = nextStop(limit);
         live.step(target - live.t);
         afterSegment();
       }
-      if (game.replayTo !== null && live.t >= game.replayTo && !live.done) { replayLog = null; game.replayTo = null; restoreAuto(); }
+      if (game.replayTo !== null && live.t >= game.replayTo && !isOver()) { replayLog = null; game.replayTo = null; restoreAuto(); }
       return live.t;
     };
     Object.defineProperty(game, 't', { get: () => live.t });
-    game.save = () => ({ v: 4, cfg: game.cfg, t: live.t, log: game.log.map((e) => ({ ...e })), autoContinuous: game.autoContinuous });
+    game.save = () => ({ v: 5, cfg: game.cfg, t: live.t, log: game.log.map((e) => ({ ...e })), autoContinuous: game.autoContinuous });
     // Only values the engine actually computes: living counts, their change over about the last 100 steps, extinction time,
     // and the catches recorded on individuals that are still alive. The prey is a shared background resource, not a lineage,
     // so there is no predator-prey relation between lineages to report; the report says so instead of inventing one.
