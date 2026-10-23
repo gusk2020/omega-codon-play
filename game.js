@@ -4,7 +4,7 @@
   'use strict';
   const NODE = typeof module === 'object' && typeof require === 'function';
   const RK = NODE ? require('./rank') : globalThis.OmegaRank;
-  const WORLD = NODE ? require('./world') : globalThis.OmegaWorld, CIVM = NODE ? require('./civilization') : globalThis.OmegaCiv, HIST = NODE ? require('./earthhistory') : globalThis.OmegaHistory, BG = NODE ? require('./background') : globalThis.OmegaBackground, AD = NODE ? require('./adaptation') : globalThis.OmegaAdaptation;
+  const OFF = NODE ? require('./offworld') : globalThis.OmegaOffworld, NICHE = NODE ? require('./niche') : globalThis.OmegaNiche, WORLD = NODE ? require('./world') : globalThis.OmegaWorld, CIVM = NODE ? require('./civilization') : globalThis.OmegaCiv, HIST = NODE ? require('./earthhistory') : globalThis.OmegaHistory, BG = NODE ? require('./background') : globalThis.OmegaBackground, AD = NODE ? require('./adaptation') : globalThis.OmegaAdaptation;
   // The game layer. It owns no science: it picks founders, advances the Stage 1.7 engine, notices notable things, and offers the
   // player a small number of environment-wide interventions. Nothing here favours a lineage or a trait.
   const DETECT_EVERY = 25, FIRST_BRANCH = 300, MIN_BRANCH_GAP = 500, CHECKPOINT_GAP = 1500, SERIES_MAX = 700;
@@ -19,6 +19,11 @@
     { id: 'hunter', startRealm: 1, niche: [0.3, 0.2, 0.5], name: '狩猟型', color: '#e5586e', text: '獲物を捕るのが上手い。', traits: { predation: 0.8 } },
     { id: 'tough', startRealm: 1, niche: [0.2, 0.5, 0.3], name: '頑丈型', color: '#b38cf0', text: '暑さ・寒さ・病気に強い。', traits: { tolerance: 0.8, immune: 0.7 } },
   ];
+  // Stage 3.0 adds two founders for the routes the concept names (dormancy, regeneration). They exist only in games started with stage 3: older saves keep the five.
+  const CREATURES7 = CREATURES.concat([
+    { id: 'dormant', startRealm: 2, niche: [0.25, 0.2, 0.55], name: '休眠型', color: '#7fd6d6', text: '深く休眠して、飢えや寒暖をやり過ごす。動きは遅い。', traits: { metabolism: 0.45, dormancyDepth: 0.08, tolerance: 0.6 } },
+    { id: 'regenerator', startRealm: 1, niche: [0.3, 0.4, 0.3], name: '再生型', color: '#e8d36a', text: '傷をよく直し、細胞を入れ替え、病気に強い。維持に費用がかかる。', traits: { repairRate: 0.9, replaceRatio: 0.7, immune: 0.7, metabolism: 0.8 } },
+  ]);
   // Niche weights: how a type spreads its plant-food intake over three separate food resources (A, B, C). Every type has one main food (50-60%) and
   // lesser use of the others; standard leans mildly to A. Differences between types are what lets several of them live on the same land
   // (resource partitioning); it never guarantees coexistence. HONEST NOTE: a first draft made `standard` an even generalist (1/3 each); as the player's
@@ -74,8 +79,8 @@
   const MAX_LINEAGES = 4;
   // Rivals are other founder types that evolve independently next to the player's focus lineages. Picking them from the
   // seed (never from how well they would do) keeps the choice neutral and repeatable.
-  function pickRivals(seed, focusIds, n) {
-    const pool = CREATURES.map((c) => c.id).filter((id) => !focusIds.includes(id));
+  function pickRivals(seed, focusIds, n, roster = CREATURES) {
+    const pool = roster.map((c) => c.id).filter((id) => !focusIds.includes(id));
     const keyed = pool.map((id, i) => [Math.sin((seed + 1) * 12.9898 + (i + 1) * 78.233) * 43758.5453 % 1, id]).map(([k, id]) => [k - Math.floor(k), id]).sort((a, b) => a[0] - b[0] || (a[1] < b[1] ? -1 : 1));
     return keyed.slice(0, Math.max(0, Math.min(n, MAX_LINEAGES - focusIds.length))).map((x) => x[1]);
   }
@@ -96,13 +101,14 @@
   }
 
   function createGame(E, cfg, saved) {
-    const focus = cfg.creatures.map((id) => CREATURES.find((c) => c.id === id)).filter(Boolean);
-    const rivalDefs = (cfg.rivals || []).map((id) => CREATURES.find((c) => c.id === id)).filter(Boolean);
+    const S3 = cfg.stage === 3 && cfg.ecology === 'v2' && cfg.time === 'adaptive', ROSTER = S3 ? CREATURES7 : CREATURES; // Stage 3.0 world: seven founders, long history, depth habitat
+    const focus = cfg.creatures.map((id) => ROSTER.find((c) => c.id === id)).filter(Boolean);
+    const rivalDefs = (cfg.rivals || []).map((id) => ROSTER.find((c) => c.id === id)).filter(Boolean);
     if (!focus.length || focus.length > 3) throw new Error('1〜3種を選んでください');
     if (focus.length + rivalDefs.length > MAX_LINEAGES) throw new Error('系統は合計4つまでです');
     const v2 = cfg.ecology === 'v2'; // v2 = niche-partitioned food, every creature type has a lineage slot, background pools may send immigrants
     const realmsOn = v2 ? true : cfg.realms === true, scenario = cfg.scenario === 'kpg' ? 'kpg' : 'free';
-    const creatures = v2 ? CREATURES.slice() : focus.concat(rivalDefs); // index = lineage id in the engine
+    const creatures = v2 ? ROSTER.slice() : focus.concat(rivalDefs); // index = lineage id in the engine
     const focusIdx = focus.map((c) => creatures.indexOf(c)), rivalIdx = rivalDefs.map((c) => creatures.indexOf(c));
     const initialIdx = v2 ? focusIdx.concat(rivalIdx) : creatures.map((_, i) => i);
     const ever = creatures.map((_, i) => initialIdx.includes(i)); // has this lineage ever had individuals in the arena
@@ -113,14 +119,15 @@
     if (!envDef) throw new Error('unknown environment');
     const counts = creatures.map(() => 0); if (v2) { const n = initialIdx.length, per = Math.floor(100 / n); initialIdx.forEach((li, k) => { counts[li] = per + (k < 100 - per * n ? 1 : 0); }); }
     const TB = v2 && cfg.time === 'adaptive'; // Stage 2.0 time base (30 days per step, leaps, civilisation, abnormal cells)
-    const live = E.simulate({ seed: cfg.seed, steps: 1e9, continueWhenEmpty: v2, ...(TB ? { civ: true, abnormal: true, deathRecordCap: 20000 } : {}), environment: envDef.engine, resourceRegime: envDef.regime, ...(envDef.scale ? { resourceScale: envDef.scale } : {}), founders: 100, lineageCount: creatures.length,
+    const live = E.simulate({ seed: cfg.seed, steps: 1e9, continueWhenEmpty: v2, ...(TB ? { civ: true, abnormal: true, deathRecordCap: 20000 } : {}), ...(S3 ? { depth: { ...NICHE.engineArrays(0), box: NICHE.makeBox(E), bins: NICHE.BINS } } : {}), environment: envDef.engine, resourceRegime: envDef.regime, ...(envDef.scale ? { resourceScale: envDef.scale } : {}), founders: 100, lineageCount: creatures.length,
       founderGenomes: creatures.map((c, i) => genomeOf(i)), sampleEvery: 100, live: true,
       ...(v2 ? { founderCounts: counts, niche: { slots: NICHE_SLOTS, weights: creatures.map((c) => c.niche), specialistBonus: NICHE_BONUS } } : {}),
       realms: realmsOn ? { startByLineage: creatures.map((c) => c.startRealm) } : null });
-    const game = { cfg: { creatures: focus.map((c) => c.id), rivals: rivalDefs.map((c) => c.id), seed: cfg.seed, environment, realms: realmsOn, scenario, ecology: v2 ? 'v2' : 'legacy', ...(v2 && cfg.background === false ? { background: false } : {}), ...(TB ? { time: 'adaptive' } : {}), ...(cfg.checkpoint ? { checkpoint: cfg.checkpoint } : {}) }, creatures, v2, focusCount: focus.length, roleOf, autoContinuous: false, live, events: [], series: [], pending: null, effects: [], log: [], replayTo: null };
+    const game = { cfg: { creatures: focus.map((c) => c.id), rivals: rivalDefs.map((c) => c.id), seed: cfg.seed, environment, realms: realmsOn, scenario, ecology: v2 ? 'v2' : 'legacy', ...(v2 && cfg.background === false ? { background: false } : {}), ...(TB ? { time: 'adaptive' } : {}), ...(S3 ? { stage: 3, ...(cfg.testStartYears ? { testStartYears: cfg.testStartYears } : {}) } : {}), ...(cfg.checkpoint ? { checkpoint: cfg.checkpoint } : {}) }, creatures, v2, focusCount: focus.length, roleOf, autoContinuous: false, live, events: [], series: [], pending: null, effects: [], log: [], replayTo: null };
     const extinctAt = new Array(creatures.length).fill(null);
     const lti = KEY_TRAITS.map((n) => E.TRAITS.findIndex((l) => l[0] === n));
-    const wm = TB ? WORLD.create(cfg.seed) : null;
+    const off = S3 ? OFF.create(cfg.seed) : null;
+    const wm = TB ? WORLD.create(cfg.seed, S3 ? { catastrophe: true, startYears: cfg.testStartYears } : {}) : null;
     let replayLog = saved ? saved.log.map((e) => ({ ...e })) : null, replayPtr = 0;
     if (saved) { game.replayTo = saved.t; }
     const restoreAuto = () => { if (saved && game.replayTo === null) game.autoContinuous = saved.autoContinuous === true; };
@@ -243,7 +250,7 @@
     // ---- Stage 1.9D: individual-centred records, the alpha-to-Omega rank, checkpoints. Read-only observation of the engine. ----
     const cp = { first: cfg.checkpoint?.first ?? CHECKPOINT.first, every: cfg.checkpoint?.every ?? CHECKPOINT.every };
     let nextCp = cp.first, focusExtinctLogged = false;
-    game.checkpoint = null; game.over = false;
+    game.checkpoint = null; game.over = false; const msQueue = [];
     const isOver = () => (v2 ? game.over : live.done);
     const legacyReplay = () => !!saved && (saved.v || 1) < 5 && game.replayTo !== null; // saves from Stages 1.8-1.9C have no checkpoints in their logs
     const dsnaps = []; // lineage detail on a 100-step grid, for windowed measures
@@ -291,11 +298,22 @@
       if (cur && (!game.rank.history.length || game.rank.history[game.rank.history.length - 1].rank !== cur.rank)) game.rank.history.push({ t: st.t, rank: cur.rank });
       if (TB) { if (!controlExtinctLogged[controlled] && peakLin[controlled] >= 5 && st.lineageAlive[controlled] === 0) { controlExtinctLogged[controlled] = true; if (!game.checkpoint) game.checkpoint = { t: st.t, kind: 'focus-extinct' }; addEvent('lineage', `操作していた${creatures[controlled].name}が絶えました。ほかに生き残っている系統があれば、操作する系統を切り替えられます（敗北条件は未実装。観察は続けられます）`); } }
       else if (v2 && !focusExtinctLogged && focusIdx.length && focusIdx.every((li) => peakLin[li] >= 5 && st.lineageAlive[li] === 0)) { focusExtinctLogged = true; if (legacyReplay()) { /* a save from before this pause existed: the run went on, so replay goes on */ } else { if (!game.checkpoint) game.checkpoint = { t: st.t, kind: 'focus-extinct' }; addEvent('lineage', 'あなたが選んだ系統がすべて絶えました（敗北条件は未実装。観察は続けられます）'); } }
-      if (v2) { const bgAlive = bg && BG.summary(bg).some((g) => !g.extinct); if (st.population === 0 && !bgAlive) game.over = true; }
+      if (v2) {
+        const bgAlive = bg && BG.summary(bg).some((g) => !g.extinct);
+        if (st.population === 0 && !bgAlive) {
+          if (S3 && OFF.aliveOutside(off)) { // the Earth's biosphere is gone but something that left it is still alive: the game goes on (observation only)
+            if (!tb.earthEnded) { tb.earthEnded = true; addEvent('world', '地球の生命圏は終わりました。地球の外へ出て一時的に生き残った系統がいるので、観察は続きます（宇宙での生存は未計算）'); msQueue.push({ cpKind: 'earth-ended', kind: 'earth-ended' }); popMilestone(); }
+          } else game.over = true;
+        }
+      }
     }
     game.topIndividuals = (n = 5) => live.individuals().sort((a, b) => b.age - a.age).slice(0, n).map((x) => ({ ...x, born: live.t - x.age, name: creatures[x.lin].name, role: roleOf(x.lin) }));
     game.records = () => creatures.map((c, i) => ({ lin: i, name: c.name, role: roleOf(i), recordAge: Math.max(recordAge[i].age, live.lineageDetail()[i].maxAgeDead), holder: recordAge[i].id, aliveNow: live.lineageDetail()[i].aliveMaxAge })).filter((r, i) => !v2 || ever[i]);
-    game.continueFromCheckpoint = () => { if (!game.checkpoint) return false; game.log.push({ t: live.t, kind: 'continue' }); if (game.checkpoint.kind === 'interval') nextCp += cp.every; game.checkpoint = null; return true; };
+    // Milestones of the long history (a warning, a catastrophe beginning, its aftermath) each pause the game like any checkpoint. If several fall together they are shown one after another.
+    function popMilestone() { if (game.checkpoint || !msQueue.length) return; const m = msQueue.shift(); game.checkpoint = { t: live.t, kind: m.cpKind || (m.kind === 'warning' ? 'warning' : m.kind === 'onset' ? 'catastrophe' : 'aftermath'), ms: m, years: wm.years }; }
+    function resolveCheckpoint() { if (game.checkpoint.kind === 'interval') nextCp += cp.every; game.checkpoint = null; popMilestone(); }
+    function raiseMilestones() { if (wm && wm.pendingMs && wm.pendingMs.length) { for (const m of wm.pendingMs.splice(0)) msQueue.push(m); popMilestone(); } }
+    game.continueFromCheckpoint = () => { if (!game.checkpoint) return false; game.log.push({ t: live.t, kind: 'continue' }); resolveCheckpoint(); return true; };
     game.individualScores = (x) => { const g = (n) => x.traits[E.TRAITS.findIndex((l) => l[0] === n)], nz = (v, lo, hi) => Math.min(1, Math.max(0, (v - lo) / (hi - lo)));
       return { instinct: (g('predation') + g('movement') + (1 - nz(g('falsePositive'), 0.02, 0.5)) + (1 - nz(g('falseNegative'), 0.02, 0.5))) / 4, intelligence: cognitionIndex(g) }; };
     Object.defineProperty(game, 'isOver', { get: () => isOver() });
@@ -319,13 +337,28 @@
       const bgUnits = bg ? BG.summary(bg).reduce((a, g) => a + g.units, 0) : 0;
       return { cog, biomass: Math.min(1, Math.max(0.15, (st.population + bgUnits) / 500)) };
     }
-    function bgWorldFactor() { if (!TB) return 1; const a = WORLD.ambient(wm), cv = wm.civ.residue.conv; return a.resource * (1 - 0.85 * (cv[0] + cv[1] + cv[2] + cv[3]) / 4); }
+    function bgWorldFactor() { if (!TB) return 1; const a = WORLD.ambient(wm), cv = wm.civ.residue.conv; return a.prod * (1 - 0.85 * (cv[0] + cv[1] + cv[2] + cv[3]) / 4); }
     const STANCE_JA = { ignore: '気に留めていない', use: '利用しようとしている', coexist: '共存している', hostile: '敵対している' };
+    // ---- life beyond the Earth (offworld.js): only reaching, and temporary survival, are computed ----
+    function offProfiles() {
+      const st = live.stats(), means = lineageTraitMeans(), ix = (n) => E.TRAITS.findIndex((l) => l[0] === n);
+      return creatures.map((c, i) => { const m = means[i], g = (n) => (m ? TRN(n, m.mean[tk(n)]) : 0); return { lin: i, name: c.name, total: st.lineageAlive[i], abund: [0, 1, 2, 3].map((r) => st.realmAlive[r][i]), traits: { tolerance: g('tolerance'), repair: g('repairRate'), movement: g('movement'), metabolism: m ? m.mean[ix('metabolism')] : 1, dormancyDepth: m ? m.mean[ix('dormancyDepth')] : 0.3 } }; });
+    }
+    function offLog(recs) { for (const r of recs) { addEvent('world', `🚀 ${creatures[r.lin].name}：${OFF.ROUTES[r.route].name}で地球の外へ（${r.note}）${r.status === 'temporary' ? '。一時的には生き残った。宇宙での自律的な生存は未計算' : '。到達したが生き残りは確認できなかった'}`); game.events[game.events.length - 1].sub = 'offworld'; } }
+    game.offworld = () => (S3 ? { records: off.records.map((r) => ({ ...r, name: creatures[r.lin].name, routeName: OFF.ROUTES[r.route].name })), summary: OFF.summary(off), earthEnded: !!tb.earthEnded, alive: OFF.aliveOutside(off), notes: '到達と、一時的な生存だけを計算しています。宇宙での自律的な生存は未計算（未実装）です。文明の輸送はΩの条件になりません。' } : null);
+    // TEST-ONLY shortcuts (present only when the game is made with testHooks: true; never from the screens, never saved): stage an extinction of the Earth's life, or a record of life that left it.
+    if (cfg.testHooks === true) game.testHooks = { killEarth() { live.clear(); if (bg) for (const g of bg.groups) { g.extinct = true; g.B.fill(0); } }, addOffworld(lin, route = 'ejecta', temporary = true) { const r = OFF.add(off, lin, route, wm.years, 1, route === 'transport', temporary, 'テスト用に追加'); offLog([r]); return r; } };
     game.worldMarks = [];
-    function worldEvent(e) { addEvent(e.kind.startsWith('civ') ? 'civ' : 'world', e.text); game.events[game.events.length - 1].sub = e.kind; game.worldMarks.push({ y: wm.years, kind: e.kind }); if (game.worldMarks.length > 300) game.worldMarks.shift(); }
+    function worldEvent(e) {
+      if (e.kind === 'cat-aftermath') { const st = live.stats(), alive = creatures.map((c, i) => (st.lineageAlive[i] > 0 ? `${c.name}${st.lineageAlive[i]}体` : null)).filter(Boolean); e = { ...e, text: `${e.text}：アリーナで生きている系統は ${alive.join('・') || 'なし'}（実際に計算した個体数）` }; }
+      if (S3) { if (e.kind === 'impact') offLog(OFF.ejecta(off, offProfiles(), wm.years, 1)); else if (e.kind === 'cat-onset') { const c = wm.cat.find((x) => x.id === e.cat); if (c.parts.includes('impact') || c.parts.includes('lunar')) offLog(OFF.ejecta(off, offProfiles(), wm.years, (c.parts.includes('impact') ? 1 + c.severity : 0.7))); } }
+      addEvent(e.kind.startsWith('civ') ? 'civ' : 'world', e.text); game.events[game.events.length - 1].sub = e.kind; game.worldMarks.push({ y: wm.years, kind: e.kind }); if (game.worldMarks.length > 300) game.worldMarks.shift(); }
     function pushEffects(st, means) {
       const prof = profiles(means), ctx = { prod: WORLD.ambient(wm).prod }, fx = CIVM.effects(wm.civ, prof, strategies, ctx), c = wm.civ.civ;
-      live.setCiv({ res: fx.res, thermal: fx.thermal, pathogen: fx.pathogen, harm: fx.harm, move: fx.move, press: fx.press, cap: fx.cap, subsidy: fx.subsidy }); tb.fx = fx;
+      const ce = wm.long ? WORLD.catEffects(wm) : null, res = fx.res.slice(), thr = fx.thermal.slice(), pth = fx.pathogen.slice(), hrm = fx.harm.slice();
+      if (ce) for (let r = 0; r < 4; r++) { res[r] *= ce.res[r]; thr[r] += Math.max(0, ce.dT[r]) / 28.6; pth[r] *= ce.path[r]; hrm[r] += ce.harm[r]; } // heat is hot-stress in the engine; 28.6 K per unit is the same scale the Sun's warming uses
+      live.setCiv({ res, thermal: thr, pathogen: pth, harm: hrm, move: fx.move, press: fx.press, cap: fx.cap, subsidy: fx.subsidy }); tb.fx = fx; tb.cat = ce;
+      if (S3) { const am = WORLD.ambient(wm), dKs = [0, 1, 2, 3].map((r) => am.warmSolar + am.warmCiv + (ce ? ce.dT[r] : 0)); if (!tb.dK || dKs.some((v, r) => Math.abs(v - tb.dK[r]) > 0.05)) { tb.dK = dKs; live.setDepth(NICHE.engineArrays(dKs)); } }
       for (let i = 0; i < creatures.length; i++) {
         const sc = fx.stances[i] || 'ignore', prev = tb.lastStance[i];
         if (sc !== prev && (st.lineageAlive[i] > 0 || prev !== 'ignore')) { if (c && (sc !== 'ignore' || prev !== 'ignore')) addEvent('civ', `文明は${creatures[i].name}${tag(i)}を${STANCE_JA[sc]}（接触${Math.round((fx.assess[i] ? fx.assess[i].exposure : 0) * 100)}%）`); game.events[game.events.length - 1].sub = 'stance-' + sc; tb.lastStance[i] = sc; }
@@ -346,7 +379,9 @@
       for (let l = 0; l < creatures.length; l++) { for (let r = 0; r < 4; r++) { atk += take.attack[l][r]; tb.takenTotal[l] += take.taken[l][r]; tb.harmTotal[l] += take.harm[l][r]; } }
       if (atk > 0) { const f = CIVM.applyAttack(wm.civ, atk, DETECT_EVERY); tb.attackTotal += atk; tb.attackFrac += f; }
       for (let i = 0; i < creatures.length; i++) { tb.wc[i].push([st.t, st.lineageAlive[i]]); if (tb.wc[i].length > 400) tb.wc[i].shift(); }
+      if (S3) offStep(dy, st); raiseMilestones(); checkEndOfHistory();
     }
+    function offStep(dt, st) { if (!off) return; const air = st.realmAlive[3].some((n) => n >= 5), civT = wm.civ.civ && wm.civ.civ.T >= 8; if (!air && !civT) return; const prof = offProfiles(); if (air) offLog(OFF.selfReach(off, prof, wm.years, dt)); if (civT && tb.fx) offLog(OFF.transport(off, prof, tb.fx.stances, wm.civ.civ, wm.years, dt)); }
     // measured decline over this window (counts first quarter vs last quarter), extrapolated across a leap. Only a fall is extrapolated; nothing is ever grown across a leap.
     function windowGrowth(i) {
       const a = tb.wc[i]; if (a.length < 16) return 0; const q = Math.max(4, a.length >> 2), m = (arr) => arr.reduce((x, y) => x + y[1], 0) / arr.length;
@@ -356,7 +391,7 @@
     function lifeMean(i, st) { const s = st.lineageStats[i]; return s.deaths ? s.lifeSum / s.deaths : 25; }
     function leapCheck() {
       if (!TB || live.t < LEAP_FROM || game.pending || game.checkpoint || isOver()) return;
-      const st = live.stats(), genSteps = clock.winGenTime || 25, Wreq = Math.max(400, Math.min(4000, Math.round(8 * genSteps)));
+      const st = live.stats(), genSteps = clock.winGenTime || 25, Wreq = st.population === 0 ? DETECT_EVERY : Math.max(400, Math.min(4000, Math.round(8 * genSteps))); // with nobody in the arena there is nothing to simulate between leaps
       if (live.t - tb.lastLeapT < Wreq) return;
       const blocker = leapBlocker(live.individuals(), (l) => lifeMean(l, st)); // an exceptionally long-lived individual is never skipped over: while one is alive, time runs step by step
       if (blocker) { tb.blocked++; tb.lastBlocker = { lin: blocker.lin, age: blocker.age, t: st.t }; return; }
@@ -369,10 +404,11 @@
       if (bg) { const k = Math.min(40, Math.max(1, Math.round(D / 5000))), arrived = creatures.map(() => 0); for (let j = 0; j < k; j++) { const r = bgRun(); for (const im of r) arrived[im.lin] += im.made; }
         arrived.forEach((n, l) => { if (n > 0) addEvent('immigration', `${creatures[l].name}${tag(l)}：時間の跳躍の間に、アリーナ外の背景集団から合わせて${n}個体が到達（進化していない祖先型）`); }); }
       tb.leapYears += D; tb.leaps++; tb.skipGens += D / (genSteps * YPS); tb.lastLeapT = live.t; tb.wc = creatures.map(() => []);
-      tb.leapLog.push({ t: st.t, years: D, bp: wm.years, extinct: rep.extinct.slice() }); if (tb.leapLog.length > 60) tb.leapLog.shift();
+      tb.leapLog.push({ t: st.t, years: D, atYears: wm.years, extinct: rep.extinct.slice(), extrapolated: growth.map((g, i) => (g < 0 && st.lineageAlive[i] > 0 ? i : -1)).filter((i) => i >= 0), kept: rep.kept.slice(), reseeded: rep.reseeded.slice(), removed: rep.removed.slice() }); if (tb.leapLog.length > 60) tb.leapLog.shift();
       if (wm.pendingDisaster) { live.disaster(wm.pendingDisaster); wm.pendingDisaster = 0; }
-      updateScenario(); pushEffects(live.stats(), null);
+      updateScenario(); pushEffects(live.stats(), null); if (S3) offStep(D, live.stats()); raiseMilestones(); checkEndOfHistory();
     }
+    function checkEndOfHistory() { if (S3 && !tb.ended && wm.years >= wm.maxYears - 1) { tb.ended = true; addEvent('world', '観測できる期間の終わりに達しました（約40億年後）。ゲーム内時間はここまでです'); game.over = true; } }
     function bgRun() { // one coarse tick of the background pools during a leap (own random stream; immigrants may arrive in the arena)
       const st = live.stats(), r = BG.tick(bg, { dt: DETECT_EVERY, resourceMod: (scenario === 'kpg' ? HIST.impactConditions(live.t).resource : 1) * bgWorldFactor(), arenaCount: st.realmAlive.map((m) => m.reduce((a, b) => a + b, 0)) });
       const out = []; for (const im of r.immigrants) { const returning = last.lineageDead[im.lin] === true && st.lineageAlive[im.lin] === 0, made = live.introduce(im.lin, genomeOf(im.lin), im.n, im.realm); if (made > 0) { ever[im.lin] = true; out.push({ lin: im.lin, made, returning }); if (returning) addEvent('immigration', `再侵入：${creatures[im.lin].name}${tag(im.lin)} ${made}個体が${E.REALM_DEFS[im.realm].name}に到達（時間の跳躍の間に、アリーナ外の背景集団から）`); } }
@@ -382,6 +418,27 @@
     function applyControl(lin) { controlled = lin; game.rank.current = null; addEvent('player', `操作する系統を${creatures[lin].name}に切り替えた（世界はそのまま続く）`); }
     game.setStrategy = (lin, sName) => { if (!TB || !STRATEGIES[sName] || !ever[lin] || strategies[lin] === sName) return false; game.log.push({ t: live.t, kind: 'strategy', lin, s: sName }); applyStrategy(lin, sName); return true; };
     game.setControlled = (lin) => { if (!TB || lin === controlled || !ever[lin] || live.stats().lineageAlive[lin] === 0) return false; game.log.push({ t: live.t, kind: 'control', lin }); applyControl(lin); return true; };
+    // What was computed and what was skipped, and how the skipped part was bridged. Years of the world clock are never presented as years of evolution.
+    game.timeLedger = () => {
+      if (!TB) return null; const st = live.stats(), ti = game.timeInfo();
+      return { simulatedSteps: st.t, simulatedYears: st.t * YPS, simulatedGenerations: ti.generations, skippedYears: tb.leapYears, leaps: tb.leaps, skippedGenerationsEstimate: tb.skipGens, blockedByLongLived: tb.blocked, daysPerStep: WORLD.DAYS_PER_STEP,
+        method: '跳躍の間は、気候・文明・天体衝突・大災厄のモデルだけを、誤差を抑えた可変の刻みで進める。生き物は進化せず、年も取らない。',
+        conditions: '長寿な個体（400ステップ以上かつ系統の平均寿命の4倍超）がいない／予告・災厄の開始・事後報告の時刻を飛び越えない／文明がいる間は短い跳躍',
+        limits: ['跳躍中の進化・個体の老化は計算していない（省略した世代の数は推定値で、進化の量ではない）', '個体は記録された最長寿命を超える期間は生き延びないものとして子孫に入れ替える', '数が減り続けていた系統は、その減少が続くとして絶滅と判定する（窓の最後の4分の1が最初の半分未満のときだけ）。増加は外挿しない', '跳躍の長さは世界モデルの変化量と出来事の期待数で決まる（収束はテストで確認）'],
+        recent: tb.leapLog.slice(-12) };
+    };
+    // The temperature x pressure habitat, all of it computed: the columns (shifted by the climate and any catastrophe), each lineage's tolerance box from its evolved traits,
+    // where the individuals actually are (depth bins), and which bins suit the lineage being controlled.
+    game.habitatInfo = (lin = controlled) => {
+      if (!S3) return null; const dist = live.depthDist(), means = lineageTraitMeans(), amb = WORLD.ambient(wm), ce = WORLD.catEffects(wm), bx = NICHE.makeBox(E);
+      const dK = [0, 1, 2, 3].map((r) => amb.warmSolar + amb.warmCiv + (ce ? ce.dT[r] : 0));
+      const realms = NICHE.REALM_IDS.map((id, r) => { const prof = NICHE.profile(id, dK[r]); return prof ? { id, r, T: prof.T, P: prof.P, res: prof.res, dK: dK[r] } : null; });
+      const boxes = creatures.map((c, i) => { const m = means[i]; if (!m) return null; const o = new Float64Array(4), d = new Float64Array(4); bx(m.mean, false, o); bx(m.mean, true, d); return { active: Array.from(o), dormant: Array.from(d), count: m.count }; });
+      const suit = boxes[lin] ? realms.map((rl) => (rl ? NICHE.suitability(boxes[lin].active, rl) : null)) : null;
+      return { realms, dK, boxes, dist, suit, segments: suit ? suit.map((x) => (x ? NICHE.segments(x) : null)) : null, controlled: lin, linkedToEvolution: true,
+        note: '箱（適応可能領域）は、いまの系統の平均的な形質（耐性・代謝・修復・休眠）から計算した許容範囲です。点は、実際にその深さ・高さにいる個体です。箱の外の場所では毎ステップ損傷を受けます。箱の中心は進化しません（広さだけ進化します）。温度と圧力の柱は、ゲーム上の仮定（実際の海・地殻・大気をなぞった形）です。' };
+    };
+    game.rankProgress = () => { const l = game.rank.lineages.find((x) => x.lin === controlled); return l ? RK.progress(l, l.metrics) : null; };
     game.strategies = () => strategies.slice();
     // What the controlled lineage faces: danger per realm (0..1) from capture hazard, damage and habitat loss, and the overall level.
     game.threat = () => {
@@ -399,7 +456,23 @@
         climate: { warm: a.warm, solar: a.warmSolar, civil: a.warmCiv, luminosity: WORLD.luminosity(-WORLD.bp(wm)) },
         civ: c ? { id: c.id, N: c.N, T: c.T, stage: CIVM.stageName(c.T), S: c.S, phase: c.phase, war: c.war, collapses: c.collapses, born: c.born, ageYears: wm.years - c.born, reach: CIVM.reach(c.T) } : null,
         residue: { pollution: r.pollution, conv: r.conv.slice(), stock: r.stock, legacy: r.legacy }, history: wm.civ.history.slice(), count: wm.civ.count, impacts: wm.impacts, volcs: wm.volcs,
-        stances: tb.fx ? tb.fx.stances.slice() : null, attackTotal: tb.attackTotal, attackFrac: tb.attackFrac, emergenceRate: CIVM.emergenceRate(wm.civ, { ...worldCtx(st, lineageTraitMeans()), prod: a.prod, warm: a.warm }) };
+        maxYears: S3 ? wm.maxYears : null, stage3: S3, stances: tb.fx ? tb.fx.stances.slice() : null, attackTotal: tb.attackTotal, attackFrac: tb.attackFrac, emergenceRate: CIVM.emergenceRate(wm.civ, { ...worldCtx(st, lineageTraitMeans()), prod: a.prod, warm: a.warm }) };
+    };
+    // The great catastrophes as the player may see them: the standing forecasts (with what they would mean for the lineage being controlled) and every crisis's state.
+    game.catInfo = () => {
+      if (!S3) return null; const fcs = WORLD.activeForecasts(wm), status = WORLD.catStatus(wm), mean = lineageTraitMeans()[controlled], amb = WORLD.ambient(wm), ce = WORLD.catEffects(wm), box = new Float64Array(4);
+      const have = !!mean; if (have) NICHE.makeBox(E)(mean.mean, false, box);
+      const dK = (r) => amb.warmSolar + amb.warmCiv + (ce ? ce.dT[r] : 0), surfT = (r) => (r === 1 ? NICHE.TREF : NICHE.profile(NICHE.REALM_IDS[r], 0).T[0]) + dK(r);
+      const forecasts = fcs.map((f) => {
+        const realms = [0, 1, 2, 3].map((r) => {
+          const id = NICHE.REALM_IDS[r], heat = f.realmHeatK[r], cold = f.realmColdK[r], Ts = surfT(r), res = f.realmRes[r];
+          let bins = null; if (have && id !== 'land') { const prof = NICHE.profile(id, dK(r) + heat); bins = NICHE.segments(NICHE.suitability(box, prof)).reduce((a, [x, y]) => a + (y - x + 1), 0); }
+          return { realm: r, id, resMul: res, heatK: heat, tMax: Ts + heat, tMin: Ts + cold, marginHeat: have ? box[1] - (Ts + heat) : null, marginCold: have ? Ts + cold - box[0] : null, habitableBins: bins, safe: have && res >= 0.4 && box[1] - (Ts + heat) >= 0 && Ts + cold - box[0] >= 0 && (bins === null || bins > 0) };
+        });
+        const needs = []; if (realms.some((x) => x.heatK > 3)) needs.push('heat'); if (realms.some((x) => x.resMul < 0.5)) needs.push('food'); if (f.pathogen.some((v) => v > 1.2)) needs.push('disease'); if (realms.some((x) => x.heatK < -3 || x.marginCold !== null && x.marginCold < 0)) needs.push('cold');
+        return { ...f, advice: { lineage: controlled, name: creatures[controlled].name, realms, safeRealms: realms.filter((x) => x.safe).map((x) => x.realm), needs, box: have ? { Tlo: box[0], Thi: box[1], Pmin: box[2], Pmax: box[3] } : null } };
+      });
+      return { forecasts, status, years: wm.years };
     };
     game.strategyReport = () => creatures.map((c, i) => ({ lin: i, name: c.name, role: roleOf(i), strategy: strategies[i], stance: tb && tb.fx ? tb.fx.stances[i] : null, assess: tb && tb.fx ? tb.fx.assess[i] : null, takenByCivilisation: tb ? tb.takenTotal[i] : 0, harmByCivilisation: tb ? tb.harmTotal[i] : 0, episodesSurvived: tb ? tb.episodes[i] : 0 })).filter((r, i) => ever[i]);
     // Units (U): the picture counts 10 arena individuals as 1 U and 10 background units as 1 U. They are kept apart and never summed into one number elsewhere.
@@ -415,7 +488,7 @@
       const st = live.stats(), total = st.population; updateClock(st);
       if (v2) for (let i = 0; i < creatures.length; i++) { peakLin[i] = Math.max(peakLin[i], st.lineageAlive[i]); for (let r = 0; r < 4; r++) peakRealm[i][r] = Math.max(peakRealm[i][r], st.realmAlive[r][i]); }
       last.peak = Math.max(last.peak, total);
-      if (st.disasters > last.lastDisasters) { addEvent('disaster', `災害が起きた（累計${st.disasters}回）`); last.lastDisasters = st.disasters; }
+      if (st.disasters > last.lastDisasters) { if (!TB || st.population > 0) addEvent('disaster', `災害が起きた（累計${st.disasters}回）`); last.lastDisasters = st.disasters; }
       for (let i = 0; i < creatures.length; i++) if (st.lineageAlive[i] === 0 && !last.lineageDead[i] && creatures.length > 1 && (!v2 || peakLin[i] >= 5)) { last.lineageDead[i] = true; extinctAt[i] = st.t; addEvent('lineage', `${creatures[i].name}${tag(i)}の系統が絶えた${tb && tb.gapNote[i] ? '（時間の跳躍の間に、個体数の減少が続くと外挿して絶滅と判定）' : ''}`); if (tb) tb.gapNote[i] = false; }
       if (creatures.length > 1 && total > 0) { let d = 0; for (let i = 1; i < creatures.length; i++) if (st.lineageAlive[i] > st.lineageAlive[d]) d = i; if (d !== last.dominant && (!TB || last.dominant < 0 || st.lineageAlive[last.dominant] === 0 || st.lineageAlive[d] >= 1.3 * st.lineageAlive[last.dominant])) { if (last.dominant >= 0) addEvent('lineage', `最大の系統が${creatures[last.dominant].name}${tag(last.dominant)}から${creatures[d].name}${tag(d)}に交代`); last.dominant = d; } }
       if (total > 0 && total < 30 && !last.crisis) { last.crisis = true; addEvent('crisis', `個体数が${total}体まで減った`); }
@@ -490,7 +563,7 @@
       if (replayLog) {
         while (replayPtr < replayLog.length && replayLog[replayPtr].t === live.t) {
           const e = replayLog[replayPtr++];
-          if (e.kind === 'continue') { if (game.checkpoint) { game.log.push({ ...e }); if (game.checkpoint.kind === 'interval') nextCp += cp.every; game.checkpoint = null; } }
+          if (e.kind === 'continue') { if (game.checkpoint) { game.log.push({ ...e }); resolveCheckpoint(); } }
           else if (e.kind === 'strategy') { game.log.push({ ...e }); applyStrategy(e.lin, e.s); }
           else if (e.kind === 'control') { game.log.push({ ...e }); applyControl(e.lin); }
           else if (e.kind === 'choice') { if (game.pending) { game.log.push({ ...e }); game.pending = null; resolveBranch(); applyEffect(e.id, e.r); } } else { game.log.push({ ...e }); applyEffect(e.kind); }
@@ -510,7 +583,7 @@
       return live.t;
     };
     Object.defineProperty(game, 't', { get: () => live.t });
-    game.save = () => ({ v: TB ? 6 : 5, cfg: game.cfg, t: live.t, log: game.log.map((e) => ({ ...e })), autoContinuous: game.autoContinuous });
+    game.save = () => ({ v: S3 ? 7 : TB ? 6 : 5, cfg: game.cfg, t: live.t, log: game.log.map((e) => ({ ...e })), autoContinuous: game.autoContinuous });
     // Only values the engine actually computes: living counts, their change over about the last 100 steps, extinction time,
     // and the catches recorded on individuals that are still alive. The prey is a shared background resource, not a lineage,
     // so there is no predator-prey relation between lineages to report; the report says so instead of inventing one.
@@ -566,5 +639,5 @@
   }
   function newGame(E, cfg) { return createGame(E, { seed: 1, ...cfg }); }
   function loadGame(E, save) { return createGame(E, save.cfg, save); }
-  return { HIST, CREATURES, ENVIRONMENTS, OPTIONS, KEY_TRAITS, TRAIT_JA, MAX_LINEAGES, STRATEGIES, pickRivals, makeGenome, newGame, loadGame, leapBlocker, DETECT_EVERY, LEAP_FROM };
+  return { HIST, CREATURES, CREATURES7, ENVIRONMENTS, OPTIONS, KEY_TRAITS, TRAIT_JA, MAX_LINEAGES, STRATEGIES, pickRivals, makeGenome, newGame, loadGame, leapBlocker, DETECT_EVERY, LEAP_FROM };
 });

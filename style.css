@@ -131,3 +131,21 @@ details{margin-top:8px}summary{color:var(--accent);font-size:14px;padding:8px 0;
 .chg2{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}.chg2 span{background:var(--panel2);border-radius:999px;padding:3px 10px;font-size:13px}.chg2 .up{color:var(--ok)}.chg2 .dn{color:var(--warn)}
 .help{background:var(--panel2);border-radius:10px;padding:8px 10px;margin:6px 0;font-size:13px}
 #civline{display:block;border-radius:10px}
+
+/* ---- Stage 3.0 ---- */
+#rankstrip{display:flex;align-items:center;gap:6px;background:var(--panel);border-radius:12px;padding:5px 10px;margin:0 0 6px;min-height:38px;font-size:13px}
+#rankstrip .rs-to{color:var(--dim)}#rankstrip .rs-to b{color:var(--accent);font-size:18px}
+#rankstrip .rq{position:relative;flex:1;display:flex;align-items:center;gap:4px;background:#0e1621;border-radius:8px;padding:3px 6px;overflow:hidden;min-width:0}
+#rankstrip .rq i{font-style:normal;position:relative;z-index:1}#rankstrip .rq b{position:relative;z-index:1;font-weight:600;font-size:12px;white-space:nowrap}
+#rankstrip .rq u{position:absolute;left:0;top:0;bottom:0;background:#1f4d3a;z-index:0}#rankstrip .rq.ok u{background:#2d6a50}
+#rankstrip .rs-more{color:var(--dim)}.rs-none{color:var(--dim);font-size:12px}
+.row3{display:flex;gap:6px;align-items:center;margin:0 0 6px}.row3 .btn.small{flex:1;min-height:40px}.row3 .chip{flex:0 0 auto;min-height:40px}
+#speedinfo:empty{display:none}
+.warnchip{border-color:var(--bad);color:#ffb3bf;background:#2a1820}
+.fc{background:var(--panel2);border-radius:12px;padding:8px 10px;margin:6px 0}.fc-head{display:flex;gap:10px;align-items:center;margin-bottom:6px}.fc-ico{font-size:30px;line-height:1}.fc-head b{display:block;font-size:16px}.fc-head small{color:var(--dim);font-size:12px}
+.rsafe{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}.rsafe span{padding:3px 10px;border-radius:999px;font-size:13px;background:#0e1621}.rsafe .ok{color:var(--ok);border:1px solid var(--ok)}.rsafe .ng{color:var(--bad);border:1px solid #6b2a36}
+.adv{margin:4px 0;font-size:12px}.adv .st{display:block;color:var(--ok)}.adv .co{display:block;color:var(--warn)}
+.cand{border-top:1px solid #243548;padding:6px 0;font-size:13px}.cand small{color:var(--dim)}
+.orow{display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-top:1px solid #243548;font-size:13px}.orow:first-of-type{border-top:0}.orow>span{font-size:18px}.orow small{display:block;color:var(--dim);font-size:11px}
+#linbar-lite{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+#tab-env canvas#habitat{aspect-ratio:1/1.15}

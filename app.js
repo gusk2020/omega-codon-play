@@ -28,13 +28,15 @@
     const s = readSaves(); s[slot] = { ...game.save(), ts: Date.now(), label: label || describe(game) };
     return writeSaves(s);
   }
-  function describe(g) { const st = g.live.stats(), wi = g.worldInfo(); return `${g.cfg.creatures.map((id) => G.CREATURES.find((c) => c.id === id).name).join('・')} ／ ${wi ? wi.bpText + ' ／ ' : ''}${st.t}ステップ ／ ${st.population}体`; }
+  function describe(g) { const st = g.live.stats(), wi = g.worldInfo(); return `${g.cfg.creatures.map((id) => (G.CREATURES7.find((c) => c.id === id) || {}).name).join('・')} ／ ${wi ? wi.bpText + ' ／ ' : ''}${st.t}ステップ ／ ${st.population}体`; }
   function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => { t.hidden = true; }, 1800); }
 
   // ---------- start screen ----------
+  const rosterNow = () => (timeMode === 'adaptive' && scenarioId === 'kpg' ? G.CREATURES7 : G.CREATURES);
   function renderStart() {
     $('creatures').innerHTML = '';
-    for (const c of G.CREATURES) {
+    { const ids = rosterNow().map((c) => c.id); sel = sel.filter((id) => ids.includes(id)); if (!sel.length) sel = ['standard']; }
+    for (const c of rosterNow()) {
       const b = document.createElement('button'); b.className = 'cr' + (sel.includes(c.id) ? ' on' : '');
       b.innerHTML = `<i style="background:${c.color}"></i><div><b>${c.name}</b><span>${c.text}</span></div>`;
       b.onclick = () => { if (sel.includes(c.id)) { if (sel.length > 1) sel = sel.filter((x) => x !== c.id); } else if (sel.length < 3) sel.push(c.id); else toast('選べるのは3種までです'); renderStart(); };
@@ -43,8 +45,8 @@
     $('rivals').innerHTML = '';
     const maxR = Math.max(0, G.MAX_LINEAGES - sel.length); if (rivalN > maxR) rivalN = maxR;
     for (let n = 0; n <= Math.min(2, maxR); n++) { const b = document.createElement('button'); b.className = 'chip' + (n === rivalN ? ' on' : ''); b.textContent = n === 0 ? 'なし' : n + '種'; b.onclick = () => { rivalN = n; renderStart(); }; $('rivals').appendChild(b); }
-    const seedNow = Math.max(1, Math.floor(Number($('seed').value)) || 1), rv = G.pickRivals(seedNow, sel, rivalN);
-    $('rival-preview').textContent = rv.length ? '競争相手（乱数の種から自動で決まります）：' + rv.map((id) => G.CREATURES.find((c) => c.id === id).name).join('・') : '競争相手なし：選んだ生き物だけが計算されます。';
+    const seedNow = Math.max(1, Math.floor(Number($('seed').value)) || 1), rv = G.pickRivals(seedNow, sel, rivalN, rosterNow());
+    $('rival-preview').textContent = rv.length ? '競争相手（乱数の種から自動で決まります）：' + rv.map((id) => rosterNow().find((c) => c.id === id).name).join('・') : '競争相手なし：選んだ生き物だけが計算されます。';
     $('scenarios').innerHTML = '';
     for (const [id, n] of [['kpg', '白亜紀末の隕石衝突から（約6,600万年前）'], ['free', '自由（衝突なし）']]) { const b = document.createElement('button'); b.className = 'chip' + (id === scenarioId ? ' on' : ''); b.textContent = n; b.onclick = () => { scenarioId = id; renderStart(); }; $('scenarios').appendChild(b); }
     $('envs').innerHTML = '';
@@ -69,7 +71,7 @@
   $('reseed').onclick = () => { $('seed').value = 1 + Math.floor(Math.random() * 99999); renderStart(); };
   $('seed').oninput = () => renderStart();
   $('seed').value = 1 + Math.floor(Math.random() * 99999);
-  $('go').onclick = () => { const seed = Math.max(1, Math.floor(Number($('seed').value)) || 1); begin(G.newGame(E, { creatures: sel.slice(), rivals: G.pickRivals(seed, sel, rivalN), environment: envId, seed, realms: true, scenario: scenarioId, ecology: 'v2', ...(timeMode === 'adaptive' && scenarioId === 'kpg' ? { time: 'adaptive' } : {}) })); };
+  $('go').onclick = () => { const seed = Math.max(1, Math.floor(Number($('seed').value)) || 1); const long = timeMode === 'adaptive' && scenarioId === 'kpg'; begin(G.newGame(E, { creatures: sel.slice(), rivals: G.pickRivals(seed, sel, rivalN, rosterNow()), environment: envId, seed, realms: true, scenario: scenarioId, ecology: 'v2', ...(long ? { time: 'adaptive', stage: 3 } : {}) })); };
 
   // ---------- play ----------
   function begin(g) {
@@ -298,7 +300,18 @@
   // ---------- habitat map (tab 環境) ----------
   const hc = $('habitat'), hx = hc.getContext('2d');
   let hRects = [], ov = ['none', 'lineage', 'individual'].includes(settings.ov) ? settings.ov : 'none', ovHist = settings.ovHist === 'hist' ? 'hist' : 'now', histT = null, selInd = null, lastEnvT = -1;
+  let envLin = null, envBox = true, envDist = true;
+  function drawHabitat3() {
+    const [W, Hh] = fit(hc, hx); hx.clearRect(0, 0, W, Hh); const hab = game.habitatInfo(envLin !== null && game.live.stats().lineageAlive[envLin] > 0 ? envLin : game.controlled), wi = game.worldInfo(), gap = 8, pw = (W - gap) / 2, ph = (Hh - gap) / 2, st = game.live.stats();
+    hRects = [];
+    for (let slot = 0; slot < 4; slot++) {
+      const p = REALM_OF_SLOT[slot], id = E.REALM_DEFS[p].id, ox = (slot % 2) * (pw + gap), oy = Math.floor(slot / 2) * (ph + gap), x = ox + 44, y = oy + 18, w = pw - 50, h = ph - 50;
+      hx.fillStyle = REALM_COLOR[id]; hx.font = 'bold 12px system-ui'; hx.fillText(`${REALM_ICON[id]} ${E.REALM_DEFS[p].name}`, ox + 4, oy + 12);
+      if (id === 'land') { hx.save(); drawLandBands(ox + 2, oy + 2, pw - 4, ph - 4, st, wi, hx); hx.restore(); } else tpMap(hx, x, y, w, h, hab, p, { showBox: envBox, showDist: envDist });
+    }
+  }
   function drawHabitat() {
+    if (STAGE3()) return drawHabitat3();
     const [W, Hh] = fit(hc, hx); hx.clearRect(0, 0, W, Hh); hRects = [];
     const gap = 6, cols = hv.split ? 2 : 1, rows = hv.split ? 2 : 1, pw = (W - gap * (cols - 1)) / cols, ph = (Hh - gap * (rows - 1)) / rows;
     const small = hv.split, ml = small ? 38 : 48, mb = small ? 24 : 32, mt = small ? 16 : 8, mr = 6, panels = hv.split ? [0, 1, 2, 3].map((slot) => [H.REALMS[REALM_OF_SLOT[slot]]]) : [H.REALMS];
@@ -417,7 +430,14 @@
     }
     d.insertAdjacentHTML('beforeend', ov === 'none' ? '' : `<div class="ovbadge">⚠ ${game.adaptationProvider.label}。範囲は乱数の種と時刻だけから決まる仮の動きで、ゲノムや生存・進化の計算とは無関係です。実線＝活動可能／破線＝休眠すれば生存可能／それ以外＝生存不能（いずれもダミー）。履歴は「一定間隔＋重要な出来事」のときに記録した、その時点のダミーの輪郭です。${ov === 'individual' ? '白い点は、その個体がいる領域の表示用の代表値です。' : ''}</div>`);
   }
+  function renderEnv3() {
+    const modes = $('env-modes'); modes.innerHTML = '<span class="note">どの系統の適応可能領域（箱）を見るか：</span>'; $('ov-modes').innerHTML = ''; $('ov-detail').innerHTML = ''; $('env-tools').innerHTML = '';
+    const cur = envLin !== null ? envLin : game.controlled;
+    game.lineageReport().filter((l) => l.alive > 0).forEach((l) => { const b = document.createElement('button'); b.className = 'chip' + (cur === l.lin ? ' on' : ''); b.textContent = l.name; b.onclick = () => { envLin = l.lin; renderEnv3(); drawHabitat3(); }; modes.appendChild(b); });
+    const t = $('env-tools'); [['適応可能領域（箱）', () => envBox, () => { envBox = !envBox; }], ['実際の分布（点）', () => envDist, () => { envDist = !envDist; }]].forEach(([n, get, flip]) => { const b = document.createElement('button'); b.textContent = n; if (get()) b.className = 'on'; b.onclick = () => { flip(); renderEnv3(); drawHabitat3(); }; t.appendChild(b); });
+  }
   function renderEnvControls() {
+    if (STAGE3()) { renderEnv3(); return; }
     renderOverlayControls();
     const modes = $('env-modes'); modes.innerHTML = '';
     for (const [sp, n] of [[true, '4分割'], [false, '統合']]) { const b = document.createElement('button'); b.className = 'chip' + (hv.split === sp ? ' on' : ''); b.textContent = n; b.onclick = () => { hv = { ...hv, split: sp }; saveSettings(); renderEnvControls(); drawHabitat(); }; modes.appendChild(b); }
@@ -437,6 +457,7 @@
     add('初期設定に戻す', false, () => { hv = H.defaultView(); });
   }
   function drawEnvNote() {
+    if (STAGE3()) { const h = game.habitatInfo(), nm = game.creatures[h.controlled].name; $('env-note').innerHTML = `<div class="assume"><b>これは進化の計算とつながっています。</b>${h.note}</div><div class="note">左＝高温・右＝低温、上＝低圧・下＝高圧。地上は圧力ではなく3層（下＝生存本能、中＝個体の学習・判断、上＝文明）で表します。層は価値の序列ではなく、同じ生物が複数の層に分布します。<br>緑の点＝${nm}が暮らせる場所、赤＝損傷を受ける場所。四角＝${nm}の適応可能領域（点線は休眠中）。気候が変わると柱が動き、暮らせる場所が縮んだり分かれたりします。</div>`; return; }
     const st = game.live.stats(), tol = game.series.length ? game.series[game.series.length - 1].traits[3] : null;
     $('env-note').innerHTML = `<div class="assume"><b>この四角は「表示用の仮定」です。</b>現在の地球の概数を置いたもので、エンジンの値ではありません。白い点線と「基準」は、地球地表の全球平均気温15℃（288.15 K）と1気圧（101325 Pa）。標準は、横＝温度の対数（<b>左が高温、右が低温</b>）、縦＝圧力の対数（上が低圧、下が高圧）です。<b>地上の四角だけは縦軸が圧力ではなく、行動・情報処理の3層</b>です（地上の圧力は内部に残しています）。空中側は宇宙環境、地中側は高温・高圧の地殻深部、水中側は低温・高圧の深海を意識した模式図で、<b>現実の空中・地中・水中の環境は広く重なり合っています</b>。地図の上をなぞると移動、2本指（またはホイール）で拡大できます。</div>
       <p class="note"><b>計算しているもの：</b>4つの領域ごとの個体数と領域間の移動（状況タブ）。領域は食料・獲物・熱ストレス・病気の強さが違うゲーム上の設定です。熱ストレス指標 ${st.thermal.toFixed(2)}（0〜1の無次元量で、温度ではありません）／集団の耐性の平均 ${tol === null ? '-' : tol.toFixed(2)}。<br><b>まだ計算していないもの：</b>温度・圧力・酸素・水分・重力そのもの、生き物ごとの適応範囲（重ね描きと履歴はダミー）。種分化・交雑は後のステージで実装します（いまは未実装です）。</p>`;
@@ -510,6 +531,7 @@
   function showCheckpoint() {
     const c = game.checkpoint; if (!c || cpShown) return; cpShown = true; playing = false; skipping = null; setPP(); putSave('auto');
     const ti = game.timeInfo(), card = $('modal-card'), rk = game.rank, st = game.live.stats(); card.className = 'card cpmodal';
+    if (['warning', 'catastrophe', 'aftermath', 'earth-ended'].includes(c.kind)) card.innerHTML = catCheckpointCard(c); else
     card.innerHTML = `<h3>${c.kind === 'focus-extinct' ? 'あなたが選んだ系統が絶えました' : '節目'}</h3><p class="note">${c.kind === 'focus-extinct' ? '敗北条件はまだ実装していません。観察は続けられます（競争相手や背景の生き物は、そのまま続きます）。' + (ADAPT() ? 'ほかに生き残っている系統があれば、画面の系統ボタンで操作する系統を切り替えられます（世界はリセットされません）。' : '') : `${ti.steps.toLocaleString('ja-JP')}ステップ（${game.historyInfo() ? 'K–Pg境界から約' + game.historyInfo().yearsSinceImpact.toFixed(0) + '年・仮定' : TM.format(ti.steps, assume) + '・仮定'}）に達しました。ここまでの様子を確認して、続けるか選べます。`}</p><p>累積世代 ${Math.round(ti.generations).toLocaleString('ja-JP')}／個体数 ${st.population}／ランク 現在 ${rk.current ? rk.current.rank : '—'}・過去最高 ${rk.best ? rk.best.rank : '—'}（暫定）</p>`;
     const mk = (t, f, cls) => { const b = document.createElement('button'); b.className = 'btn big ' + (cls || ''); b.textContent = t; b.onclick = f; card.appendChild(b); };
     mk('続行する（生命と生態系はそのまま）', () => { game.continueFromCheckpoint(); cpShown = false; card.className = 'card'; $('modal').hidden = true; playing = true; setPP(); }, 'primary');
@@ -558,7 +580,8 @@
     const civ = wi ? (wi.civ ? `<span class="hchip">🏛 ${wi.civ.stage}</span>` : '<span class="hchip dim">🏛 文明なし</span>') : '';
     const lv = th ? ['安全', '注意', '危険', '非常に危険'][th.level] : null, col = th ? ['#46c28a', '#f2d13d', '#f2a03d', '#e5586e'][th.level] : null;
     const thr = th ? `<span class="hchip" style="border-color:${col};color:${col}">${['🟢', '🟡', '🟠', '🔴'][th.level]} ${lv}</span>` : '';
-    $('hud2').innerHTML = pops + civ + thr + `<span class="hchip dim" id="hud-time" role="button">⏳ 時間のしくみ</span>`;
+    $('hud2').innerHTML = pops + civ + thr + (STAGE3() ? catBannerChips() : '') + `<span class="hchip dim" id="hud-time" role="button">⏳ 時間のしくみ</span>`;
+    document.querySelectorAll('#hud2 [data-cat]').forEach((e) => { e.onclick = () => openCatDetail(); }); document.querySelectorAll('#hud2 [data-off]').forEach((e) => { e.onclick = () => openOffworld(); });
     const t = $('hud-time'); if (t) t.onclick = () => openTimeInfo();
   }
   // --- lineage chips: the lineage you are controlling is ringed; tap another living one to switch (the world does not reset) ---
@@ -598,7 +621,7 @@
   // --- the world picture: four realms, units (U), the three layers on land, the civilisation in the top layer ---
   function drawWorld2(st) {
     const [W, H2] = fit(cv, cx), gw = W / 2, gh = H2 / 2; cx.clearRect(0, 0, W, H2);
-    const U = game.units(), wi = game.worldInfo(), th = wi ? game.threat() : null, rg = [0, 1, 2, 3];
+    const U = game.units(), wi = game.worldInfo(), th = wi ? game.threat() : null, rg = [0, 1, 2, 3], hab = STAGE3() ? game.habitatInfo() : null;
     const dangerCol = (d) => (d < 0.1 ? null : d < 0.35 ? 'rgba(242,160,61,' : 'rgba(229,88,110,');
     rg.forEach((p) => {
       const slot = SLOT_OF_REALM[p], x0 = (slot % 2) * gw, y0 = Math.floor(slot / 2) * gh, id = E.REALM_DEFS[p].id, col = REALM_COLOR[id], ux = x0 + 2, uy = y0 + 2, uw = gw - 4, uh = gh - 4;
@@ -606,7 +629,7 @@
       if (th) { const dc = dangerCol(th.danger[p]); if (dc) { cx.fillStyle = dc + (0.12 + 0.25 * th.danger[p]) + ')'; cx.fillRect(ux, uy, uw, uh); } }
       let tot = 0; U.realms[p].forEach((c) => { tot += c.arenaIndividuals; });
       cx.font = 'bold 12px system-ui'; cx.fillStyle = col; cx.fillText(`${REALM_ICON[id]} ${E.REALM_DEFS[p].name}  ${uTxt(tot)}`, ux + 6, uy + 15);
-      if (id === 'land') drawLandBands(ux, uy, uw, uh, st, wi); else drawUnitRows(p, ux, uy + 20, uw, uh - 22, U);
+      if (id === 'land') drawLandBands(ux, uy, uw, uh, st, wi); else if (hab) tpMap(cx, ux + 3, uy + 20, uw - 6, uh - 24, hab, p, { small: true }); else drawUnitRows(p, ux, uy + 20, uw, uh - 22, U);
     });
     if (th && th.civAlive) { cx.font = '11px system-ui'; cx.fillStyle = '#e6edf5'; cx.textAlign = 'right'; cx.fillText(`${STANCE_ICON[th.stance]} ${game.creatures[game.controlled].name}への文明の態度`, W - 6, H2 - 4); cx.textAlign = 'left'; }
   }
@@ -626,19 +649,21 @@
     });
   }
   // the land square: three layers. Bottom = survival instinct, middle = individual intelligence (both computed), top = society/culture: the civilisation (computed, abstract)
-  function drawLandBands(x, y, w, h, st, wi) {
-    const top = y + 20, bh = (h - 22) / 3, names = ['🏛 知性・文化（文明）', '🧠 個体の知能', '🦴 生存本能'];
+  const mainCtx = cx;
+  function drawLandBands(x, y, w, h, st, wi, ctxArg) {
+    const c0 = ctxArg || mainCtx;
+    const top = y + 20, bh = (h - 22) / 3, names = ['🏛 文明・文化', '🧠 個体の知能', '🦴 生存本能'];
     for (let k = 0; k < 3; k++) {
-      const by = top + k * bh; cx.globalAlpha = k % 2 ? 0.1 : 0.05; cx.fillStyle = '#46c28a'; cx.fillRect(x, by, w, bh); cx.globalAlpha = 1; cx.strokeStyle = '#2c3f55'; cx.beginPath(); cx.moveTo(x, by); cx.lineTo(x + w, by); cx.stroke();
-      cx.fillStyle = k === 0 && !(wi && wi.civ) ? '#6f8296' : '#46c28a'; cx.font = '9px system-ui'; cx.fillText(names[k], x + 4, by + 10);
+      const by = top + k * bh; c0.globalAlpha = k % 2 ? 0.1 : 0.05; c0.fillStyle = '#46c28a'; c0.fillRect(x, by, w, bh); c0.globalAlpha = 1; c0.strokeStyle = '#2c3f55'; c0.beginPath(); c0.moveTo(x, by); c0.lineTo(x + w, by); c0.stroke();
+      c0.fillStyle = k === 0 && !(wi && wi.civ) ? '#6f8296' : '#46c28a'; c0.font = '9px system-ui'; c0.fillText(names[k], x + 4, by + 10);
     }
     const ind = game.live.individuals().filter((q) => q.patch === 1), buckets = [0, 1].map(() => game.creatures.map(() => new Array(6).fill(0)));
     for (const q of ind) { const sc = game.individualScores(q); buckets[0][q.lin][Math.min(5, Math.floor(sc.instinct * 6))]++; buckets[1][q.lin][Math.min(5, Math.floor(sc.intelligence * 6))]++; }
     [[2, 0], [1, 1]].forEach(([band, bi]) => { const by = top + band * bh;
-      game.creatures.forEach((c, i) => { buckets[bi][i].forEach((n, b) => { if (!n) return; const r = Math.min(7, 2 + Math.sqrt(n / 10) * 2.2), px = x + 10 + (b + 0.5) / 6 * (w - 20) + (i - 2) * 3, py = by + bh - 6 - (b % 2) * 3; cx.globalAlpha = 0.8; cx.fillStyle = c.color; cx.beginPath(); cx.arc(px, py - 2, r, 0, 6.2832); cx.fill(); cx.globalAlpha = 1; }); }); });
+      game.creatures.forEach((c, i) => { buckets[bi][i].forEach((n, b) => { if (!n) return; const r = Math.min(7, 2 + Math.sqrt(n / 10) * 2.2), px = x + 10 + (b + 0.5) / 6 * (w - 20) + (i - 2) * 3, py = by + bh - 6 - (b % 2) * 3; c0.globalAlpha = 0.8; c0.fillStyle = c.color; c0.beginPath(); c0.arc(px, py - 2, r, 0, 6.2832); c0.fill(); c0.globalAlpha = 1; }); }); });
     const ty = top, civ = wi && wi.civ;
-    if (civ) { const n = Math.max(1, Math.round(1 + civ.N * 12)); cx.font = '13px system-ui'; for (let k = 0; k < n; k++) cx.fillText(k % 3 === 2 ? '🏭' : '🏛', x + 6 + (k % Math.floor((w - 12) / 16)) * 16, ty + 26 + Math.floor(k / Math.floor((w - 12) / 16)) * 13); cx.font = '10px system-ui'; cx.fillStyle = '#e6edf5'; cx.textAlign = 'right'; cx.fillText(`${civ.stage}  安定${Math.round(civ.S * 100)}%`, x + w - 4, ty + 10); cx.textAlign = 'left'; }
-    else { cx.fillStyle = '#6f8296'; cx.font = '10px system-ui'; cx.fillText(wi ? '文明はいない' : '未計算（旧方式）', x + 6, ty + 26); }
+    if (civ) { const n = Math.max(1, Math.round(1 + civ.N * 12)); c0.font = '13px system-ui'; for (let k = 0; k < n; k++) c0.fillText(k % 3 === 2 ? '🏭' : '🏛', x + 6 + (k % Math.floor((w - 12) / 16)) * 16, ty + 26 + Math.floor(k / Math.floor((w - 12) / 16)) * 13); c0.font = '10px system-ui'; c0.fillStyle = '#e6edf5'; c0.textAlign = 'right'; c0.fillText(`${civ.stage}  安定${Math.round(civ.S * 100)}%`, x + w - 4, ty + 10); c0.textAlign = 'left'; }
+    else { c0.fillStyle = '#6f8296'; c0.font = '10px system-ui'; c0.fillText(wi ? '文明はいない' : '未計算（旧方式）', x + 6, ty + 26); }
   }
   // --- 世界 tab: the civilisation timeline, the present civilisation, what it left behind, the controlled lineage's danger, how time works ---
   const wcv = document.createElement('canvas'); wcv.id = 'civline'; wcv.height = 120;
@@ -664,6 +689,7 @@
     if (th) h += `<div class="card2"><div class="row2"><b>${STANCE_ICON[th.stance]} ${game.creatures[th.lin].name}の状況</b><span>文明は${STANCE_NAME[th.stance]}</span></div><div class="g3"><span>接触の度合い</span>${gauge(th.exposure)}</div><div class="dang">${[0, 1, 2, 3].map((r) => `<div><span>${REALM_ICON[E.REALM_DEFS[r].id]}</span>${gauge(th.danger[r], th.danger[r] > 0.35 ? 'bad' : th.danger[r] > 0.1 ? 'warn' : '')}</div>`).join('')}</div><div class="note">領域ごとの危険度。いちばん安全なのは ${E.REALM_DEFS[th.safestRealm].name}。方針：${STRAT_ICON[th.strategy]} ${G.STRATEGIES[th.strategy].name}</div></div>`;
     const sim = wi.simulatedYears, leap = wi.leapYears, tot = Math.max(1, sim + leap);
     h += `<div class="card2"><div class="row2"><b>⏳ 時間の内訳</b><span>${fmtY(wi.years)}</span></div><div class="split"><i style="width:${Math.max(1, (sim / tot) * 100)}%" class="a"></i><i style="width:${(leap / tot) * 100}%" class="b"></i></div><div class="note">計算した時間 ${fmtY(sim)}（個体を1ステップずつ）／跳躍で進めた時間 ${fmtY(leap)}（世界のモデルだけ・${wi.leaps}回）　世代：計算 ${Math.round(wi.generations).toLocaleString('ja-JP')}、跳躍で省略した分（推定・計算外）${wi.skippedGenerations.toExponential(1)}</div></div>`;
+    if (STAGE3()) h += worldVisual3();
     return h;
   }
   function timeExplainHtml(wi) {
@@ -709,13 +735,134 @@
   }
   function logVisual() { const ev = game.events.filter((e) => MAJOR_KINDS.has(e.kind)).slice(-12).reverse(); return ev.map((e) => `<div class="tk"><span>${evIcon(e)}</span><div>${e.text}<small>${e.y !== undefined ? fmtY(e.y) + '後' : ''} ${e.t}ステップ</small></div></div>`).join('') || '<div class="note">まだありません</div>'; }
 
-  let lastTabT = -999, tkN = -1, stratKey = '', linKey = '';
+  // ---------- Stage 3.0: temperature x pressure maps, rank progress, catastrophe forecasts, life beyond the Earth ----------
+  const STAGE3 = () => !!(game && game.cfg.stage === 3);
+  const NEED_ICON = { heat: '🌡', food: '🍃', disease: '🦠', cold: '❄' };
+  const NEED_TEXT = { heat: ['耐性を高める', '維持費がかかる'], food: ['低代謝・深い休眠で飢えを越える', '取り分と繁殖力が落ちる'], disease: ['免疫を強める', '維持費がかかる'], cold: ['代謝を上げる／深い休眠', 'エネルギー消費が増える'] };
+  const NEED_NAME = { heat: '高温', food: '食べ物の減少', disease: '病気の増加', cold: '低温' };
+  const TP_RANGE = (id, dK) => ({ water: { T: [262, 395 + Math.max(0, dK)], P: [1e5, 3e8] }, underground: { T: [272, 440 + Math.max(0, dK)], P: [1e5, 3e8] }, air: { T: [190, 330 + Math.max(0, dK)], P: [5e2, 1.5e5] } })[id];
+  const KfmtT = (T) => `${Math.round(T - 273.15)}℃`;
+  const Pfmt = (P) => (P >= 1e7 ? `${Math.round(P / 1e6)}MPa` : P >= 1e5 ? `${(P / 1e5).toFixed(P >= 1e6 ? 0 : 1)}気圧` : P >= 1e3 ? `${(P / 1e3).toFixed(0)}kPa` : `${Math.round(P)}Pa`);
+  // One realm's temperature x pressure map (left = hot, top = low pressure). Drawn: the column of the realm (shifted by the climate), the controlled lineage's tolerance box
+  // (what its evolved body allows; dashed = while dormant), which bins suit it, and where the individuals really are (circles = units, 10 individuals each).
+  function tpMap(c, x, y, w, h, hab, p, opt = {}) {
+    const rl = hab.realms[p]; if (!rl) return; const rg = TP_RANGE(rl.id, rl.dK), lp0 = Math.log10(rg.P[0]), lp1 = Math.log10(rg.P[1]);
+    const X = (T) => x + ((rg.T[1] - T) / (rg.T[1] - rg.T[0])) * w, Y = (P) => y + ((Math.log10(P) - lp0) / (lp1 - lp0)) * h, clampX = (v) => Math.max(x, Math.min(x + w, v)), clampY = (v) => Math.max(y, Math.min(y + h, v));
+    c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip(); c.fillStyle = '#0d1520'; c.fillRect(x, y, w, h); c.strokeStyle = '#1d2d40'; c.lineWidth = 1;
+    for (let k = 1; k < 4; k++) { c.beginPath(); c.moveTo(x + (w * k) / 4, y); c.lineTo(x + (w * k) / 4, y + h); c.stroke(); c.beginPath(); c.moveTo(x, y + (h * k) / 4); c.lineTo(x + w, y + (h * k) / 4); c.stroke(); }
+    const col = REALM_COLOR[rl.id], ctl = hab.controlled, bx = hab.boxes[ctl], suit = hab.suit && hab.suit[p];
+    if (opt.showBox !== false && bx) { const a = bx.active, d = bx.dormant; c.setLineDash([3, 3]); c.strokeStyle = game.creatures[ctl].color; c.globalAlpha = 0.6; c.strokeRect(clampX(X(d[1])), clampY(Y(d[2])), clampX(X(d[0])) - clampX(X(d[1])), clampY(Y(d[3])) - clampY(Y(d[2]))); c.setLineDash([]); c.globalAlpha = 0.14; c.fillStyle = game.creatures[ctl].color; const bw = clampX(X(a[0])) - clampX(X(a[1])), bh = clampY(Y(a[3])) - clampY(Y(a[2])); c.fillRect(clampX(X(a[1])), clampY(Y(a[2])), bw, bh); c.globalAlpha = 1; c.lineWidth = 1.6; c.strokeRect(clampX(X(a[1])), clampY(Y(a[2])), bw, bh); }
+    c.strokeStyle = col; c.globalAlpha = 0.5; c.lineWidth = 1.5; c.beginPath(); rl.T.forEach((T, k) => { const px = X(T), py = Y(rl.P[k]); if (k === 0) c.moveTo(px, py); else c.lineTo(px, py); }); c.stroke(); c.globalAlpha = 1;
+    rl.T.forEach((T, k) => { const ok = suit ? suit[k] >= 0.75 : true; c.fillStyle = ok ? '#46c28a' : '#e5586e'; c.globalAlpha = 0.9; c.beginPath(); c.arc(X(T), Y(rl.P[k]), opt.small ? 2 : 3, 0, 6.2832); c.fill(); }); c.globalAlpha = 1;
+    // where individuals are: per lineage per bin, sized by units
+    const d = hab.dist[p]; if (d && opt.showDist !== false) game.creatures.forEach((cr, i) => { d[i].forEach((n, k) => { if (!n) return; const r = Math.min(opt.small ? 8 : 12, 2.5 + Math.sqrt(n / 10) * (opt.small ? 3 : 4.5)), off = (i - 3) * (opt.small ? 1.6 : 2.2); c.globalAlpha = i === ctl ? 0.95 : 0.6; c.fillStyle = cr.color; c.beginPath(); c.arc(X(rl.T[k]) + off, Y(rl.P[k]) + off * 0.6, r, 0, 6.2832); c.fill(); if (i === ctl) { c.strokeStyle = '#fff'; c.lineWidth = 1.2; c.stroke(); } }); }); c.globalAlpha = 1;
+    c.restore();
+    if (!opt.small) { c.fillStyle = '#7f93a8'; c.font = '10px system-ui'; c.textAlign = 'center'; for (let k = 0; k <= 4; k += 2) { const T = rg.T[1] - ((rg.T[1] - rg.T[0]) * k) / 4; c.fillText(KfmtT(T), Math.max(x + 14, Math.min(x + w - 14, x + (w * k) / 4)), y + h + 12); } c.textAlign = 'right'; for (let k = 0; k <= 4; k++) { const lp = lp0 + ((lp1 - lp0) * k) / 4; c.fillText(Pfmt(Math.pow(10, lp)), x - 3, y + (h * k) / 4 + 3); } c.textAlign = 'center'; c.fillText('温度（左＝高温・右＝低温）', x + w / 2, y + h + 25); c.textAlign = 'left'; }
+    else { c.fillStyle = '#7f93a8'; c.font = '8px system-ui'; c.textAlign = 'left'; c.fillText('熱◀', x + 2, y + h - 3); c.textAlign = 'right'; c.fillText('▶冷', x + w - 2, y + h - 3); c.textAlign = 'left'; c.fillText('低圧', x + 2, y + 18); c.fillText('高圧', x + w - 24, y + h - 12); }
+  }
+  // ---------- rank progress: the next rank, and what stands in the way ----------
+  function drawRankStrip() {
+    const el = $('rankstrip'); if (!el) return; const p = game.rankProgress && game.rankProgress();
+    if (!p || !p.judged) { el.innerHTML = `<span class="rs-none">次のランク：${p ? '判定中（個体が増え、観察が300ステップを超えると表示）' : '—'}</span>`; el.onclick = null; return; }
+    if (!p.to) { el.innerHTML = '<span class="rs-none">判定できる範囲の最高です（Ωは判定未実装）</span>'; el.onclick = null; return; }
+    el.innerHTML = `<span class="rs-to">次 <b>${p.to}</b></span>` + p.requirements.map((r) => `<span class="rq ${r.met ? 'ok' : ''}" title="${r.label}"><i>${r.icon}</i><b>${r.met ? '✔' : r.id === 'continuity' ? `あと${Math.round(r.short)}` : `あと${r.short}つ`}</b><u style="width:${Math.round(r.ratio * 100)}%"></u></span>`).join('') + '<span class="rs-more">▸</span>';
+    el.onclick = () => openRankProgress();
+  }
+  function openRankProgress() {
+    const p = game.rankProgress(), rk = game.rank, card = $('modal-card'), was = playing; playing = false; setPP(); card.className = 'card';
+    let h = `<h3>次のランクへ</h3><div class="ladder">${RKmod().order.map((r) => `<span class="${rk.current && rk.current.rank === r ? 'cur' : ''} ${rk.best && rk.best.rank === r ? 'best' : ''}">${r}</span>`).join('')}<span class="om">Ω<small>未判定</small></span></div><div class="note">現在 <b>${rk.current ? rk.current.rank : 'なし'}</b>　歴代最高 <b>${rk.best ? rk.best.rank : 'なし'}</b>${rk.best ? `（${rk.best.t.toLocaleString('ja-JP')}ステップ）` : ''}。現在は下がることがあり、歴代最高は記録として残ります。</div>`;
+    if (!p || !p.judged) h += `<div class="card2"><div class="note">${p ? p.reason : '判定中です'}</div></div>`;
+    else if (!p.to) h += `<div class="card2">${p.note}</div>`;
+    else {
+      h += `<div class="card2"><div class="row2"><b>${p.from} → ${p.to}</b><span>達成度 ${Math.round(p.done * 100)}%</span></div>${gauge(p.done)}<div class="note">${p.note}</div></div>`;
+      for (const r of p.requirements) {
+        h += `<div class="card2"><div class="row2"><b>${r.icon} ${r.label}</b><span>${r.met ? '✔ 達成' : '未達'}</span></div>`;
+        if (r.id === 'continuity') h += `<div class="g3"><span>いま／必要</span>${gauge(r.ratio, r.met ? '' : 'warn')}</div><div class="note">いま ${Math.round(r.have).toLocaleString('ja-JP')}ステップ（約${(r.have * 30 / 365.25).toFixed(1)}年）／必要 ${Math.round(r.need).toLocaleString('ja-JP')}ステップ${r.met ? '' : `　<b>あと ${Math.round(r.short).toLocaleString('ja-JP')}ステップ</b>`}</div>${r.met ? '' : advBlock(r.advice)}`;
+        else {
+          h += `<div class="note">達した軸 ${r.haveCount}／必要 ${r.needCount}${r.met ? '' : `　<b>あと${r.short}つ</b>`}</div>`;
+          if (!r.met) h += r.candidates.slice(0, 3).map((cd) => `<div class="cand"><b>${AXIS_ICON[cd.id] || '・'} ${cd.name}</b>　<small>${cd.value === null ? (cd.why || '判定できません') : `いま ${fmtAxis(cd)}→ 必要 ${cd.target}（${cd.shortRatio === null ? '' : `あと約${Math.round(cd.shortRatio * 100)}%`}）`}</small>${advBlock(cd.advice)}</div>`).join('');
+        }
+        h += '</div>';
+      }
+    }
+    h += '<div class="note">ランクは能力の足し算ではありません。知能・人口・文明の規模が高いだけでは上がりません。戦略には代償があり、どの道を選んでも保証はありません。</div>';
+    card.innerHTML = h; const b = document.createElement('button'); b.className = 'btn primary big'; b.textContent = '閉じる'; b.onclick = () => { $('modal').hidden = true; if (was && !game.pending && !game.checkpoint && !game.isOver) { playing = true; setPP(); } }; card.appendChild(b); $('modal').hidden = false;
+  }
+  const fmtAxis = (cd) => (cd.value === null ? '-' : cd.id === 'range' ? `${cd.value}領域` : cd.id === 'competition' ? `${Math.round(cd.value)}ステップ` : cd.id === 'independence' ? `${cd.value}回` : cd.value.toFixed(cd.value < 10 ? 3 : 0));
+  const advBlock = (a) => (a ? `<div class="adv"><div>${a.strategies.map((s) => `<span class="st">＋ ${s}</span>`).join('')}</div><div>${a.costs.map((s) => `<span class="co">− ${s}</span>`).join('')}</div></div>` : '');
+  // ---------- catastrophe forecasts and the pauses around them ----------
+  let catCache = { t: -1, v: null };
+  const catNow = () => { if (!STAGE3()) return null; if (catCache.t !== game.t) catCache = { t: game.t, v: game.catInfo() }; return catCache.v; };
+  function forecastCard(f, live) {
+    const adv = f.advice, ico = f.kinds.map((k) => ({ impact: '☄', oceanLoss: '🏜', climateShock: '🌋', lunar: '🌙' }[k] || '💥')).join('');
+    let h = `<div class="fc"><div class="fc-head"><span class="fc-ico">${ico}</span><div><b>${f.kindNames.join('＋')}</b><small>${f.eraLabel}の危機（${f.setting}）</small></div></div>`;
+    h += `<div class="row2"><span>${live ? '推定' : '予告'}：およそ <b>${fmtY(f.remainingYears)}後</b></span><span>誤差の幅 約${fmtY(f.windowYears)}</span></div>`;
+    h += `<div class="g3"><span>規模「${f.scaleClass}」</span>${gauge(Math.min(1, f.scaleValue / 4), f.scaleValue >= 2 ? 'bad' : 'warn')}<span>確からしさ</span><small>${f.confidence}</small></div>`;
+    h += '<div class="dang">' + [0, 1, 2, 3].map((r) => `<div><span>${REALM_ICON[E.REALM_DEFS[r].id]}</span>${gauge(1 - f.realmRes[r], 1 - f.realmRes[r] > 0.5 ? 'bad' : 'warn')}<small>${f.realmHeatK[r] > 2 ? '＋' + Math.round(f.realmHeatK[r]) + 'K' : f.realmColdK[r] < -2 ? Math.round(f.realmColdK[r]) + 'K' : '±0'}</small></div>`).join('') + '</div><div class="note">棒＝その領域の食べ物の減り方、下の数字＝気温の変化の見込み</div>';
+    h += `<div class="note">${f.kindText.join(' ')}</div>`;
+    if (adv) {
+      h += `<div class="card2"><div class="row2"><b>🛡 ${adv.name}にとって</b><span>${adv.needs.length ? adv.needs.map((n) => NEED_ICON[n] + NEED_NAME[n]).join('・') : '大きな脅威は見込まれません'}</span></div>`;
+      h += '<div class="rsafe">' + adv.realms.map((r) => `<span class="${r.safe ? 'ok' : 'ng'}">${REALM_ICON[r.id]}${r.safe ? '残れそう' : '厳しい'}</span>`).join('') + '</div>';
+      const safe = adv.safeRealms.map((r) => E.REALM_DEFS[r].name); h += `<div class="note">${safe.length ? `影響が小さく残れそうな領域：<b>${safe.join('・')}</b>（逃避の方針は、移動できる個体を、領域・深さの安全なほうへ向かわせます）` : '安全に残れそうな領域は見当たりません。耐性・休眠・修復で耐えるしかありません。'}</div>`;
+      if (adv.box) h += `<div class="note">いまの耐熱の上限 ${KfmtT(adv.box.Thi)}、耐寒の下限 ${KfmtT(adv.box.Tlo)}。予想される最高気温（領域の地表）：${adv.realms.filter((r) => r.id !== 'underground').map((r) => `${REALM_ICON[r.id]}${KfmtT(r.tMax)}`).join(' ')}</div>`;
+      for (const n of adv.needs) h += `<div class="adv"><div><span class="st">${NEED_ICON[n]} ＋ ${NEED_TEXT[n][0]}</span></div><div><span class="co">− ${NEED_TEXT[n][1]}</span></div></div>`;
+      h += '</div>';
+    }
+    if (f.hypothesis) h += '<div class="assume">🌙 月の破局は、この作品独自の仮説です。科学的に確立した説ではありません。</div>';
+    h += `<details><summary>この予告について</summary><p class="note">${f.note} 太陽の光度の増大（科学的な根拠のある現象）が後の年代の危機を重くしますが、災厄の種類・規模・時期はゲーム上の確率モデルです。</p></details></div>`;
+    return h;
+  }
+  function catCheckpointCard(c) {
+    const ci = game.catInfo(); const ms = c.ms; let h = '';
+    if (c.kind === 'warning') { const f = ci.forecasts.find((x) => x.cat === ms.cat); h = `<h3>⚠ 大災厄の${['早期の予告', '更新された予告', '直前の警告'][ms.stageIndex]}</h3>` + (f ? forecastCard(f, false) : '<p class="note">予告の詳細を取得できませんでした。</p>'); }
+    else if (c.kind === 'catastrophe') {
+      const st = ci.status.find((x) => x.id === ms.cat), fcPrev = null; h = `<h3>🔥 大災厄が始まった</h3><div class="fc"><div class="fc-head"><span class="fc-ico">${st.kinds.map((k) => ({ impact: '☄', oceanLoss: '🏜', climateShock: '🌋', lunar: '🌙' }[k] || '💥')).join('')}</span><div><b>${st.kindNames.join('＋')}</b><small>${st.label}の危機・規模「${st.scaleClass}」</small></div></div><div class="note">${st.recoverable ? '生態系が回復する余地のある災厄です。生き残りがいれば、時間をかけて戻ります。' : '元に戻らない環境の変化をともないます。生き残れる場所は限られます。'}</div>${st.hypothesis ? '<div class="assume">🌙 月の破局は、この作品独自の仮説です。</div>' : ''}<div class="note">予告と実際の結果は一致しないことがあります。ここから先は、実際に計算された影響が生き物に作用します。</div></div>`;
+    } else if (c.kind === 'aftermath') { const st = game.live.stats(), alive = game.creatures.map((cr, i) => (st.lineageAlive[i] > 0 ? `<span class="lchip" style="--c:${cr.color}"><i></i><b>${cr.name}</b><span>${uTxt(st.lineageAlive[i])}</span></span>` : '')).join(''); h = `<h3>災厄のあと</h3><div class="note">災厄の始まりから約20万年。いま実際に計算されている生き残りです。</div><div id="linbar-lite">${alive || '<div class="note">アリーナで生きている系統はいません</div>'}</div><div class="note">背景の生き物や文明は、世界の「世界」タブで確認できます。回復できる災厄なら、これから生態系が戻り、新しい系統や文明が現れることがあります。</div>`; }
+    else if (c.kind === 'earth-ended') { const o = game.offworld(); h = `<h3>🌍 地球の生命圏は終わりました</h3><div class="note">地球の外へ出て、一時的に生き残った系統がいるので、観察は続きます。</div>${offworldHtml(o)}`; }
+    return h;
+  }
+  function offworldHtml(o) {
+    if (!o) return ''; const recs = o.records.slice(-8).reverse();
+    return `<div class="card2"><div class="row2"><b>🚀 地球の外へ出た系統</b><span>${o.records.length}件</span></div>${recs.length ? recs.map((r) => `<div class="orow"><span>${r.route === 'transport' ? '🛸' : r.route === 'ejecta' ? '☄' : '🚀'}</span><div><b>${r.name}</b>　${r.routeName}<small>${r.status === 'temporary' ? '到達・一時的に生存' : '到達のみ（生存は確認できず）'}${r.supported ? '・文明の支え' : ''}${r.omegaEligible ? '' : '・Ωの条件にはならない'}</small></div></div>`).join('') : '<div class="note">まだありません</div>'}<div class="note">${o.notes}</div></div>`;
+  }
+  function openOffworld() { const card = $('modal-card'), was = playing; playing = false; setPP(); card.className = 'card'; card.innerHTML = `<h3>地球の外</h3>${offworldHtml(game.offworld())}`; const b = document.createElement('button'); b.className = 'btn primary big'; b.textContent = '閉じる'; b.onclick = () => { $('modal').hidden = true; if (was && !game.pending && !game.checkpoint && !game.isOver) { playing = true; setPP(); } }; card.appendChild(b); $('modal').hidden = false; }
+  function openCatDetail() {
+    const ci = game.catInfo(); const card = $('modal-card'), was = playing; playing = false; setPP(); card.className = 'card';
+    card.innerHTML = `<h3>大災厄</h3>${ci.forecasts.length ? ci.forecasts.map((f) => forecastCard(f, true)).join('') : '<div class="note">いま出ている予告はありません。</div>'}${catTimelineHtml(ci)}`;
+    const b = document.createElement('button'); b.className = 'btn primary big'; b.textContent = '閉じる'; b.onclick = () => { $('modal').hidden = true; if (was && !game.pending && !game.checkpoint && !game.isOver) { playing = true; setPP(); } }; card.appendChild(b); $('modal').hidden = false;
+  }
+  function catRowsHtml(ci) {
+    const ICON = { future: '・', warned: '⚠', active: '🔥', aftermath: '🌱', past: '✔' }, NAME = { future: 'まだ先（予告なし）', warned: '予告あり', active: '最中', aftermath: '回復の途中', past: '過ぎた' };
+    return ci.status.map((s) => `<div class="orow"><span>${ICON[s.state]}</span><div><b>${s.label}</b>　${NAME[s.state]}<small>${s.kindNames ? `${s.kindNames.join('＋')}・規模「${s.scaleClass}」・${s.recoverable ? '回復の余地あり' : '元に戻らない'}` : s.setting}</small></div></div>`).join('');
+  }
+  function catTimelineHtml(ci) {
+    const ICON = { future: '・', warned: '⚠', active: '🔥', aftermath: '🌱', past: '✔' }, NAME = { future: 'まだ先（予告なし）', warned: '予告あり', active: '最中', aftermath: '回復の途中', past: '過ぎた' };
+    return '<div class="card2"><div class="row2"><b>長期の危機</b><span>10億・20億・30億年代</span></div>' + ci.status.map((s) => `<div class="orow"><span>${ICON[s.state]}</span><div><b>${s.label}</b>　${NAME[s.state]}<small>${s.kindNames ? `${s.kindNames.join('＋')}・規模「${s.scaleClass}」・${s.recoverable ? '回復の余地あり' : '元に戻らない'}` : s.setting}</small></div></div>`).join('') + '</div>';
+  }
+  function catBannerChips() {
+    const ci = catNow(); if (!ci) return ''; let out = '';
+    for (const f of ci.forecasts) out += `<span class="hchip warnchip" data-cat="1">⚠ 大災厄の予告 ${fmtY(f.remainingYears)}後 規模「${f.scaleClass}」</span>`;
+    const act = ci.status.find((s) => s.state === 'active' || s.state === 'aftermath'); if (act) out += `<span class="hchip warnchip" data-cat="1">${act.state === 'active' ? '🔥 大災厄の最中' : '🌱 災厄の回復途中'}（${act.label}）</span>`;
+    const o = game.offworld(); if (o && o.records.length) out += `<span class="hchip" data-off="1">🚀 地球外 ${o.records.length}</span>`;
+    return out;
+  }
+  // ---------- 世界 tab additions: crises, life beyond the Earth, the time ledger ----------
+  function worldVisual3() {
+    const ci = game.catInfo(), o = game.offworld(), L = game.timeLedger(); let h = '';
+    h += `<div class="card2"><div class="row2"><b>🌋 長期の危機</b><span>${ci.forecasts.length ? '予告が出ています' : '予告なし'}</span></div>${ci.forecasts.map((f) => `<div class="note">⚠ ${f.kindNames.join('＋')}（${f.eraLabel}）あと約${fmtY(f.remainingYears)}・規模「${f.scaleClass}」</div>`).join('')}${catRowsHtml(ci)}</div>`;
+    if (o) h += offworldHtml(o);
+    if (L) h += `<div class="card2"><div class="row2"><b>⏳ 計算した時間／省略した時間</b><span>跳躍${L.leaps}回</span></div><div class="note">計算した ${fmtY(L.simulatedYears)}（${L.simulatedSteps.toLocaleString('ja-JP')}ステップ、${Math.round(L.simulatedGenerations).toLocaleString('ja-JP')}世代）／跳躍で省略 ${fmtY(L.skippedYears)}（世代は推定 ${L.skippedGenerationsEstimate.toExponential(1)}・進化していない）。<br><small>${L.method}</small></div><details><summary>近似の条件と限界</summary><div class="note">${L.conditions}</div>${L.limits.map((x) => `<div class="note">・${x}</div>`).join('')}${L.recent.slice(-4).map((r) => `<div class="note"><small>跳躍 ${fmtY(r.years)}（${r.t}ステップ時点）：減少の外挿 ${r.extrapolated.length ? r.extrapolated.map((i) => game.creatures[i].name).join('・') : 'なし'}、入れ替え ${r.reseeded.reduce((a, b) => a + b, 0)}体、絶滅 ${r.extinct.length ? r.extinct.map((i) => game.creatures[i].name).join('・') : 'なし'}</small></div>`).join('')}</details></div>`;
+    return h;
+  }
+
+  let lastTabT = -999, tkN = -1, stratKey = '', linKey = '', rsT = -999;
   function draw(force) {
     if (!game) return; const st = game.live.stats();
     drawHud(); if (game.cfg.realms) drawWorld2(st); else drawWorld(st);
     const lk = game.lineageReport().map((l) => l.alive + ':' + (game.rank.byLin[l.lin] && game.rank.byLin[l.lin].current ? game.rank.byLin[l.lin].current.rank : '')).join(',') + '|' + game.controlled; if (force || lk !== linKey) { linKey = lk; drawLinbar2(); }
     const th = ADAPT() ? game.threat() : null, sk = (ADAPT() ? game.strategies().join(',') + (th ? th.stance : '') : '') + '|' + game.controlled; if (force || sk !== stratKey) { stratKey = sk; drawStratbar(); }
     if (force || tkN !== game.events.length) { tkN = game.events.length; drawTicker(); }
+    if (force || st.t - rsT >= 50 || st.t < rsT) { rsT = st.t; drawRankStrip(); }
     const due = force || st.t - lastTabT >= 25; if (due && tab !== 'env') lastTabT = st.t;
     if (tab === 'world') { if (due) drawWorldTab(); }
     else if (tab === 'stat') { if (due) drawStat(st); }

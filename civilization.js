@@ -26,6 +26,8 @@
     // environment load (pollution + disturbance), its persistence, and how conversion relaxes and fades
     eRate: 0.12, eDecayKyr: 300, convTau: 2, convFadeKyr: 60,
     // what happens at a collapse
+    lowTechSlack: false, // Stage 3.0 worlds set this (longer steps while a pre-industrial society is the only thing changing)
+    stockStressByTech: false, // Stage 3.0 worlds set this: a low-technology society does not collapse because of a mine it does not use
     collapseN: [0.05, 0.4], collapseDecay: 0.7, collapseT: [0.3, 0.6], legacyGain: 0.12,
   };
   const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
@@ -48,7 +50,7 @@
     const dT = par.gT * (1 + 1.2 * legacy) * (0.3 + 0.7 * S) * Math.sqrt(N / (0.05 + N)) * Math.max(0, 1 - T / TM) * (1 - 0.5 * env.war);
     const heavy = Math.max(0, T - 2.5);
     const dE = par.eRate * heavy * N - E / par.eDecayKyr;
-    const stress = 0.6 * Math.max(0, E - 0.6) + 0.5 * Math.max(0, N / Kc - 0.9) + par.warCost * env.war + 0.35 * Math.max(0, T - 6) * (1 - S * 0.3) + 0.4 * Math.max(0, 1 - sat(stock * 3) - 0.0);
+    const stress = 0.6 * Math.max(0, E - 0.6) + 0.5 * Math.max(0, N / Kc - 0.9) + par.warCost * env.war + 0.35 * Math.max(0, T - 6) * (1 - S * 0.3) + 0.4 * Math.max(0, 1 - sat(stock * 3) - 0.0) * (par.stockStressByTech ? clamp(T / 4, 0, 1) : 1);
     const dS = par.sRecover * (1 - S) * (S > 0 ? 1 : 0) - stress * 0.5 * S;
     const tgt = [clamp(0.12 * T * Math.sqrt(N / 0.3), 0, 0.95), clamp(0.07 * Math.max(0, T - 2), 0, 0.8), clamp(0.06 * Math.max(0, T - 3), 0, 0.8), clamp(0.07 * Math.max(0, T - 2), 0, 0.85)];
     const dc = [0, 1, 2, 3].map((r) => (tgt[r] > y[4 + r] ? (tgt[r] - y[4 + r]) / par.convTau : -y[4 + r] / par.convFadeKyr));
@@ -133,7 +135,7 @@
     if (!c) { const lam = emergenceRate(w, ctx); const byEmerge = lam > 0 ? 0.3 / lam : Infinity; const resid = w.residue.pollution > 0.05 || w.residue.conv.some((v) => v > 0.03) ? 20000 : Infinity; return Math.min(byEmerge, resid); }
     const y = stateVec(w), d = deriv(y, { prod: ctx.prod, war: c.war }, par, w.residue.legacy); let m = Infinity;
     for (let i = 0; i < 4; i++) { const sc = SCALE[i] * 3; if (Math.abs(d[i]) > 1e-12) m = Math.min(m, sc / Math.abs(d[i])); }
-    const shock = par.shockRate * (0.5 + c.T / 6); if (shock > 0) m = Math.min(m, 0.25 / shock);
+    const shock = par.shockRate * (0.5 + c.T / 6); if (shock > 0) m = Math.min(m, (par.lowTechSlack && c.T < 3 ? 6 : 1) * 0.25 / shock); // a society short of industry may be stepped over several small shocks at once (Stage 3.0 worlds)
     return Math.max(50, m * 1000);
   }
   // ---- relations with the arena's lineages and the pressure they feel ---------------------------------------------------------------------------

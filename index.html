@@ -10,7 +10,7 @@
 <body>
 <div id="start" class="screen">
   <h1>Omega Codon</h1>
-  <p class="sub">地球編・中間版（Stage 2.0）。生き物を選び、個体の進化と、知性文明との対立を観察します。</p>
+  <p class="sub">地球編（Stage 3.0）。生き物を選び、個体の進化と、生息域の変化、知性文明との対立、長い地球史の大災厄を観察します。</p>
   <h2>1. 注目する生き物（1〜3種）</h2>
   <div id="creatures"></div>
   <h2>2. 競争相手の数</h2>
@@ -39,6 +39,7 @@
     <button id="menu" class="btn small" aria-label="メニュー">☰</button>
   </div>
   <div id="hud2"></div>
+  <div id="rankstrip" role="button"></div>
   <div id="timeline" hidden></div>
   <canvas id="world" width="360" height="260"></canvas>
   <div id="linbar"></div>
@@ -46,11 +47,9 @@
   <div class="controls">
     <button id="pp" class="btn primary">⏸</button>
     <div id="speeds"></div>
-    <button id="save" class="btn small">保存</button>
   </div>
-  <div class="skiprow"><button id="skip" class="btn small">⏭ 次の出来事まで早送り</button><span id="skipnote" class="note"></span></div>
-  <div id="speedinfo" class="note"></div>
-  <div class="controls2"><button id="auto" class="chip">自動：OFF</button><span class="note" id="auto-note"></span></div>
+  <div class="row3"><button id="skip" class="btn small">⏭ 次の出来事まで</button><button id="auto" class="chip">自動：OFF</button><button id="save" class="btn small">保存</button></div>
+  <div id="speedinfo" class="note"></div><span id="skipnote" class="note"></span><span class="note" id="auto-note" hidden></span>
   <div id="ticker"></div>
   <nav id="tabs"><button data-tab="world" class="on">世界</button><button data-tab="stat">状況</button><button data-tab="ind">個体</button><button data-tab="rank">ランク</button><button data-tab="trait">形質</button><button data-tab="graph">推移</button><button data-tab="env">環境</button><button data-tab="log">履歴</button></nav>
   <section id="tab-world"></section>
@@ -77,7 +76,10 @@
 <script src="earthhistory.js"></script>
 <script src="adaptation.js"></script>
 <script src="civilization.js"></script>
+<script src="catastrophe.js"></script>
 <script src="world.js"></script>
+<script src="niche.js"></script>
+<script src="offworld.js"></script>
 <script src="timemodel.js"></script>
 <script src="habitat.js"></script>
 <script src="rank.js"></script>

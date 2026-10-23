@@ -166,6 +166,7 @@
     realms: null, // null = the original undivided patches (bit-identical to Stage 1.7); true or {…} = the four habitat realms below
     abnormal: null, // Stage 2.0: null = off (bit-identical); true or {…} = abnormal-cell (cancer-like) model: arises with cell turnover and damage, grows, is held down by immune surveillance, kills when it gets large
     civ: false, // Stage 2.0: true = accept per-realm / per-lineage pressure from an outside civilisation model (setCiv) and per-lineage strategies (setStance); false = bit-identical
+    depth: null, // Stage 3.0: null = off (bit-identical); {T,P,res,act,box} = individuals have a depth/height bin in each realm; a bin outside an individual's temperature-pressure box damages it every step
     deathRecordCap: Infinity, // live runs of unbounded length keep only this many compact death records (counts and sums are exact regardless)
   };
   // Habitat realms (Stage 1.9B). A realm is a patch with a name and a minimal set of attributes. THESE NUMBERS ARE GAME SETTINGS, NOT
@@ -396,6 +397,9 @@
     // civilisation hooks: res/pathogen are multipliers on a realm, thermal and harm are additions, cap is the chance per step that an exposed
     // individual of a lineage in a realm is taken (capture, cull, machines), subsidy is food handed to a lineage, move scales how freely
     // anyone leaves a realm, press is how dangerous the realm is (used by fleeing individuals). stance: 0 none, 1 flee, 2 coexist, 3 defend, 4 attack.
+    // depth: arrays indexed [realm][bin]. T in K, P in Pa, res = food multiplier, act = realms that use bins. box(traits, dormant, out) fills out = [Tlo, Thi, Pmin, Pmax].
+    const DP = o.depth ? { T: o.depth.T, P: o.depth.P, res: o.depth.res, act: o.depth.act, box: o.depth.box, bins: o.depth.T[0].length, rate: o.depth.rate ?? 0.12, out: new Float64Array(4), out2: new Float64Array(4), tRate: o.depth.tRate ?? 0.003, pRate: o.depth.pRate ?? 0.05 } : null;
+    const NSRC = 5 + (o.civ ? 1 : 0) + (DP ? 1 : 0), PIDX = 5 + (o.civ ? 1 : 0);
     const CV = o.civ ? { res: new Array(o.patches).fill(1), thermal: zeroRealm(), pathogen: new Array(o.patches).fill(1), harm: zeroRealm(), move: new Array(o.patches).fill(1), press: zeroRealm(),
       cap: perLin(), subsidy: perLin(), stance: new Array(o.lineageCount).fill(0), attack: perLin(), taken: perLin(), harmTaken: perLin() } : null;
     const t0 = Date.now();
@@ -420,7 +424,7 @@
     const startInf = (x) => { x.load = IFR ? IFR.load : 0.2; x.infLeft = IFR ? IFR.duration : 0; x.infAge = 0; };
     const newborn = (genome, patch, energy, lin = 0) => birth({ id: nextId++, lin, cap: ENERGY_MAX, genome, patch, energy, age: 0, internal: 0, active: 0,
       damage: 0, load: 0, A: 0, O: 1, M: 0, Mpeak: 0, P: 0, mode: M_EXPLORE, pending: -1, arousal: 0, births: 0,
-      dmgSrc: o.civ ? [0, 0, 0, 0, 0, 0] : [0, 0, 0, 0, 0], hunts: 0, catches: 0, present: false, strain: -1, imA: -1, imS: 0, imPeak: 0, infections: 0, reinfections: 0, acclimCost: 0, infLeft: 0, infAge: 0 });
+      dmgSrc: NSRC === 5 ? [0, 0, 0, 0, 0] : new Array(NSRC).fill(0), zb: 0, hunts: 0, catches: 0, present: false, strain: -1, imA: -1, imS: 0, imPeak: 0, infections: 0, reinfections: 0, acclimCost: 0, infLeft: 0, infAge: 0 });
     const birth = (x) => { developInto(x, devSignals(patches[x.patch], 0)); return x; };
     let pop = [];
     if (o.founderCounts) { for (let lin = 0; lin < o.founderCounts.length; lin++) for (let j = 0; j < o.founderCounts[lin]; j++) pop.push(newborn(cloneGenome(o.founderGenomes[lin % o.founderGenomes.length]), RM ? (RM.startByLineage ? RM.startByLineage[lin] : RM.start[j % RM.start.length]) : (pop.length % o.patches), 1.0, lin)); }
@@ -447,7 +451,7 @@
     const causes = { capacityCull: 0, extrinsic: 0, starvation: 0, senescence: 0, thermal: 0, pathogen: 0, disaster: 0, injury: 0 };
     const deaths = []; // compact records: calendar, active, internal, births, O, memoryRetention (capped at o.deathRecordCap; deathCount is exact)
     let deathCount = 0; const pushDeath = (r) => { deathCount++; if (deaths.length < o.deathRecordCap) deaths.push(r); };
-    const DAMAGE_SOURCES = ['senescence', 'thermal', 'pathogen', 'disaster', 'injury']; if (CV) DAMAGE_SOURCES.push('civilization');
+    const DAMAGE_SOURCES = ['senescence', 'thermal', 'pathogen', 'disaster', 'injury']; if (CV) DAMAGE_SOURCES.push('civilization'); if (DP) DAMAGE_SOURCES.push('pressure');
     const decisions = { tp: 0, fp: 0, fn: 0, tn: 0 }, sensing = { cueWhenAbsent: 0, absent: 0, missWhenPresent: 0, present: 0 };
     const modeSteps = new Array(NM + 1).fill(0);
     let disasters = 0, envSignature = 0, huntSteps = 0, huntEncounters = 0, catches = 0, totalBirths = 0, extinctAt = null, capHit = false, switches = 0;
@@ -502,6 +506,7 @@
       }
       for (const x of pop) { const p = patches[x.patch]; p.count++; if (x.load > 0) p.infected++; }
 
+      const binCnt = DP ? DP.act.map((a, i) => (a ? new Int32Array(DP.bins) : null)) : null; if (DP) for (const x of pop) if (binCnt[x.patch]) binCnt[x.patch][x.zb]++;
       // 1. sense, decide, set demand
       for (const x of pop) {
         const p = patches[x.patch];
@@ -509,7 +514,7 @@
         if (o.plasticity && x.age > 0 && x.age % o.acclimateEvery === 0) { developInto(x, devSignals(p, x.damage)); x.acclimCost = o.acclimateCost; } // re-acclimation
         const g = o.selection ? x.genome : founder, lo = x.ph;
         const metab = lo[L.metabolism];
-        const prod = p.resource * (p.famine > 0 ? 0.4 : 1) * pulse;
+        const prod = p.resource * (p.famine > 0 ? 0.4 : 1) * pulse * (DP && DP.act[x.patch] ? DP.res[x.patch][x.zb] : 1);
         const memF = memOn ? x.M : 0;
         // An encounter persists until the prey is caught or slips away, so a hunt
         // started on a cue can still find it after the switching delay.
@@ -556,7 +561,7 @@
         modeSteps[mode]++;
         const modeMetab = mode === M_DORMANT ? lo[L.dormancyDepth] : MODE_METAB[mode];
         const activity = metab * modeMetab;
-        const prod = p.resource * (p.famine > 0 ? 0.4 : 1) * pulse;
+        const prod = p.resource * (p.famine > 0 ? 0.4 : 1) * pulse * (DP && DP.act[x.patch] ? DP.res[x.patch][x.zb] : 1);
         let gain = 0;
         if (x.demand > 0) {
           if (NICHE) { const w = NICHE.w[x.lin], ps = prod / NICHE.S; gain = 0; for (let k = 0; k < NICHE.S; k++) { const dk = x.demand * w[k]; if (dk > 0) gain += Math.min(dk * ps / (ps + 4 / NICHE.S), ps * dk / (p.slotDemand[k] || 1)) * (1 + NICHE.bonus * (w[k] - 1 / NICHE.S)); } }
@@ -645,8 +650,10 @@
         const di = p.hit * (1 - 0.6 * lo[L.tolerance]) * shelter;
         let ch = 0;
         if (CV) { const hv = CV.harm[x.patch]; if (hv > 0) { const st = CV.stance[x.lin]; ch = hv * (1 - 0.6 * lo[L.tolerance]) * shelter * (st === 3 ? 1 - 0.4 * (0.4 * lo[L.tolerance] + 0.3 * lo[L.immune] + 0.3 * Math.min(1, lo[L.repairRate])) : 1); CV.harmTaken[x.lin][x.patch] += ch; } }
-        x.damage += sen + th + pa + di + ch; lstat.dmgIn[x.lin] += sen + th + pa + di + ch;
-        x.dmgSrc[0] += sen; x.dmgSrc[1] += th; x.dmgSrc[2] += pa; x.dmgSrc[3] += di; if (ch) x.dmgSrc[5] += ch;
+        let dtm = 0, dpr = 0;
+        if (DP && DP.act[x.patch]) { DP.box(lo, x.eff === M_DORMANT, DP.out); const T = DP.T[x.patch][x.zb], P = DP.P[x.patch][x.zb], b = DP.out; dtm = DP.tRate * Math.max(0, T - b[1], b[0] - T); dpr = DP.pRate * (Math.max(0, Math.log(P / b[3])) + Math.max(0, Math.log(b[2] / P))) / Math.LN10; }
+        x.damage += sen + th + pa + di + ch + dtm + dpr; lstat.dmgIn[x.lin] += sen + th + pa + di + ch + dtm + dpr;
+        x.dmgSrc[0] += sen; x.dmgSrc[1] += th + dtm; x.dmgSrc[2] += pa; x.dmgSrc[3] += di; if (ch) x.dmgSrc[5] += ch; if (dpr) x.dmgSrc[PIDX] += dpr;
         // regeneration: repair keeps original cells; replacement swaps them for blank ones
         { const removed = 0.15 * fix + 0.35 * rep * eff; lstat.dmgOut[x.lin] += Math.min(removed, Math.max(0, x.damage)); }
         x.damage -= 0.15 * fix + 0.35 * rep * eff;
@@ -691,7 +698,7 @@
           x.energy -= OFFSPRING_COST; ledger.reproOverhead += OFFSPRING_COST - OFFSPRING_ENERGY;
           const genome = o.mutation && mutRand() < o.mutationRate ? mutate(x.genome, mutRand, o.maxEdges, o.storageEvolvable ? NT : NL, o.storageEvolvable ? { supply: o.storageSupply, scale: o.storageEffectScale } : null) : x.genome;
           const patch = RM ? x.patch : rand() < o.migrationRate ? Math.floor(rand() * o.patches) : x.patch;
-          next.push(newborn(genome, patch, OFFSPRING_ENERGY, x.lin)); lstat.births[x.lin]++; birthTrace[t]++; x.births++; totalBirths++; parentAgeSum += x.age;
+          { const nbx = newborn(genome, patch, OFFSPRING_ENERGY, x.lin); if (DP) nbx.zb = x.zb; next.push(nbx); } lstat.births[x.lin]++; birthTrace[t]++; x.births++; totalBirths++; parentAgeSum += x.age;
         }
         if (RM) {
           // Realm movement: only while exploring, only with a reserve, success odds scale with the movement trait, adjacent realms only.
@@ -700,9 +707,17 @@
             const adj = REALM_ADJ[x.patch]; let dest = adj[Math.floor(rand() * adj.length)];
             if (CV && CV.stance[x.lin] === 1) { let bp = CV.press[x.patch], best = x.patch; for (const a of adj) if (CV.press[a] < bp) { best = a; bp = CV.press[a]; } if (best !== x.patch) dest = best; } // a fleeing individual heads for the safest neighbouring realm
             const cost = RM.cost * REALM_DIFF[x.patch][dest];
-            if (x.energy >= cost + RM.reserve) { x.energy -= cost; ledger.spent += cost; lstat.spent[x.lin] += cost; spentBy.moving = (spentBy.moving || 0) + cost; moves[x.patch][dest]++; x.patch = dest; }
+            if (x.energy >= cost + RM.reserve) { x.energy -= cost; ledger.spent += cost; lstat.spent[x.lin] += cost; spentBy.moving = (spentBy.moving || 0) + cost; moves[x.patch][dest]++; x.patch = dest; if (DP) x.zb = 0; }
           }
         } else if (rand() < o.migrationRate * 0.25) x.patch = Math.floor(rand() * o.patches);
+        if (DP && DP.act[x.patch] && (mode === M_EXPLORE || mode === M_WAIT || mode === M_HUNT) && x.energy > 0.35 && rand() < DP.rate * (0.3 + 0.7 * lo[L.movement])) {
+          // up or down one bin, to the one that is better for this body (food and survival), a little crowd-shy, with a little exploration
+          const pt = x.patch, nb = x.zb + (rand() < 0.5 ? -1 : 1);
+          if (nb >= 0 && nb < DP.bins) {
+            const bc = binCnt[pt], avg = Math.max(1, p.count / DP.bins), score = (b) => { DP.box(lo, false, DP.out2); const T = DP.T[pt][b], P = DP.P[pt][b], q = DP.out2, d = DP.tRate * Math.max(0, T - q[1], q[0] - T) + DP.pRate * (Math.max(0, Math.log(P / q[3])) + Math.max(0, Math.log(q[2] / P))) / Math.LN10; return DP.res[pt][b] * Math.max(0.02, 1 - 6 * d) / (1 + bc[b] / (avg + 2)); };
+            if (score(nb) > score(x.zb) * 1.02 || rand() < 0.08) { x.energy -= 0.004; ledger.spent += 0.004; lstat.spent[x.lin] += 0.004; bc[x.zb]--; x.zb = nb; bc[nb]++; }
+          }
+        }
         next.push(x);
       }
       for (const p of patches) { if (p.famine > 0) p.famine--; { const preyFloor = o.preyRefuge * p.preyCap; if (p.prey < preyFloor) { eco.floorAdded += preyFloor - p.prey; p.prey = preyFloor; } } }
@@ -712,7 +727,8 @@
       { const pf = patches.reduce((a, p) => a + p.prey / p.preyCap, 0) / patches.length; eco.sum += pf; eco.n++; if (pf < eco.min) eco.min = pf; if (t <= 400) { eco.earlySum += pf; eco.earlyN++; } }
       if (LT) { const cnt = new Array(o.lineageCount).fill(0); for (const x of pop) cnt[x.lin]++; for (let k = 0; k < cnt.length; k++) if (cnt[k] === 0 && linExtinctAt[k] === null) linExtinctAt[k] = t; }
       if (pop.length === 0 && extinctAt === null) extinctAt = t;
-      if (t % o.sampleEvery === 0 || t === o.steps || pop.length === 0) sample(t);
+      if (t % o.sampleEvery === 0 || t === o.steps || (pop.length === 0 && !(o.continueWhenEmpty && history.length && history[history.length - 1].population === 0))) sample(t); // an empty arena that keeps running is sampled once, not every step
+      if (o.live && history.length > 2000) history.splice(0, history.length - 1500); // a live run has no end: keep the recent samples only
       pendingDisaster = 0;
       return true;
     };
@@ -738,6 +754,9 @@
           for (const k of ['cap', 'subsidy']) if (c[k]) for (let l = 0; l < NLN; l++) if (c[k][l]) for (let i = 0; i < CV[k][l].length; i++) CV[k][l][i] = c[k][l][i];
         },
         setStance(lin, code) { if (!CV) throw new Error('civ option is off'); CV.stance[lin] = code; },
+        clear() { for (const x of pop) ledger.lostAtDeath += x.energy; pop = []; }, // remove every individual (used by tests to stage an extinction)
+        setDepth(d) { if (!DP) throw new Error('depth option is off'); for (const k of ['T', 'P', 'res']) if (d[k]) for (let r = 0; r < d[k].length; r++) for (let b = 0; b < d[k][r].length; b++) DP[k][r][b] = d[k][r][b]; },
+        depthDist() { if (!DP) return null; const out = DP.act.map((a) => (a ? Array.from({ length: NLN }, () => new Array(DP.bins).fill(0)) : null)); for (const x of pop) if (out[x.patch]) out[x.patch][x.lin][x.zb]++; return out; },
         civTake() { // what the pressure did since the last call: attack power put out, individuals taken, damage dealt (per lineage, per realm)
           if (!CV) return null; const r = { attack: CV.attack.map((a) => a.slice()), taken: CV.taken.map((a) => a.slice()), harm: CV.harmTaken.map((a) => a.slice()) };
           for (const k of ['attack', 'taken', 'harmTaken']) for (const a of CV[k]) a.fill(0); return r;
@@ -773,7 +792,7 @@
             modes: (() => { const m = new Array(NM + 1).fill(0); for (const x of pop) m[x.mode]++; return m; })(),
             meanEnergy: pop.length ? pop.reduce((a, x) => a + x.energy, 0) / pop.length : 0, meanAge: pop.length ? pop.reduce((a, x) => a + x.age, 0) / pop.length : 0 };
         },
-        individuals() { return pop.map((x) => ({ id: x.id, lin: x.lin, age: x.age, energy: x.energy, mode: x.mode, patch: x.patch, damage: x.damage, births: x.births, catches: x.catches, hunts: x.hunts, O: x.O, P: x.P, active: x.active, internal: x.internal, M: x.M, load: x.load, infections: x.infections, eff: x.eff, A: x.A, traits: x.ph, genes: x.genome.genes.length })); },
+        individuals() { return pop.map((x) => ({ id: x.id, lin: x.lin, age: x.age, energy: x.energy, mode: x.mode, patch: x.patch, damage: x.damage, births: x.births, catches: x.catches, hunts: x.hunts, O: x.O, P: x.P, active: x.active, internal: x.internal, M: x.M, load: x.load, infections: x.infections, eff: x.eff, A: x.A, zb: x.zb, traits: x.ph, genes: x.genome.genes.length })); },
         traitMeans, result: () => buildResult(),
       };
       return live;

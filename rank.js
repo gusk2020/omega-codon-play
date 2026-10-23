@@ -68,5 +68,36 @@
     const reason = best.id === 'α' ? 'まだ、判定できる能力が基準に届いていません。' : `連続生存期間が段階${C}（最長記録 ${m.continuity}ステップ）で、段階1以上の能力軸が${K[1]}つ：${strong.join('、') || 'なし'}。`;
     return { judged: true, rank: best.id, rankIndex: idx, C, K, axes, reason, nextRank: nextRank ? nextRank.id : null, missing, omega: OMEGA, provisional: true };
   }
-  return { AXES, CONTINUITY, RANKS, OMEGA, evaluate, tierOf, contTier, order: RANKS.map((r) => r.id) };
+  // ---- Stage 3.0: what stands between this rank and the next, as numbers ----
+  // For each requirement: what the lineage has, what is needed, the shortfall, and (for the ability axes) which axes are the nearest to the needed tier. Nothing here
+  // changes the rank rules; it only reads the same result `evaluate` produced.
+  const ADVICE = {
+    continuity: { strategies: ['低代謝にして老化を遅らせる', '修復・更新を高める', '休眠で飢えをやり過ごす', '危険の少ない領域・深さへ移る'], costs: ['餌の取り分で不利になり、繁殖も控えめになる（摂食量は代謝に比例）', '修復・免疫の維持に毎ステップの費用がかかる', '細胞の入れ替えを増やすと異常細胞のリスクが上がる', '移動のたびにエネルギーを使う'] },
+    aging: { strategies: ['低代謝（内部時計がゆっくり進む）', '修復力を上げる', '細胞の入れ替えで再生する', '免疫で損傷の原因を減らす'], costs: ['取り分と繁殖力が落ちる', '修復の維持費', '入れ替えは異常細胞を増やす', '免疫の維持費'] },
+    repair: { strategies: ['修復力を上げる', '細胞の入れ替えを増やす', '免疫を強めて異常細胞を抑える', '修復に向く休息（修復モード）を多くとる'], costs: ['毎ステップの維持費', '入れ替えが多いほど異常細胞が増える', '免疫の維持費', 'その間は餌を探せない'] },
+    efficiency: { strategies: ['代謝を下げる', '休眠を深くする', '無駄な移動・狩りを減らす'], costs: ['餌の奪い合いで負けやすい', '動けない間は繁殖や探索ができない', '食べ物が少ないと伸びにくい'] },
+    range: { strategies: ['移動能力を高めて別の領域に広がる', '耐性を高めて厳しい領域でも暮らす'], costs: ['移動のエネルギー', '厳しい領域では毎ステップ損傷を受ける（熱・圧力の許容範囲の外）', '食べ物が乏しい'] },
+    dormancy: { strategies: ['休眠を深くする', '目覚める条件（飢えと危険の見分け）を磨く'], costs: ['休眠中は餌も繁殖もない', '目覚めに時間がかかる'] },
+    independence: { strategies: ['防御（耐性・免疫・修復で捕獲と損傷を減らす）', '逃避（文明の影響が弱い領域・深さへ）', '共存の支援に頼らない'], costs: ['警戒・逃避のエネルギー', '厳しい領域の乏しい食べ物', '共存の支援（食料）を受けられない'] },
+    competition: { strategies: ['餌の種類をずらして競争を避ける', '多様な領域に分かれて住む', '長く生き残る体をつくる'], costs: ['得意でない餌では効率が落ちる', '分かれて住むと個体群が小さくなる'] },
+  };
+  const AXIS_TARGET = (ax, l) => (ax.tiers[l - 1] === undefined || ax.tiers[l - 1] === Infinity ? null : ax.tiers[l - 1]);
+  function progress(res, m) {
+    if (!res || !res.judged) return { judged: false, reason: res ? res.reason : '判定中' };
+    const cur = RANKS[res.rankIndex], next = RANKS[res.rankIndex + 1]; if (!next) return { judged: true, from: cur.id, to: null, requirements: [], done: 1, note: '判定できる範囲の最高に達しています。Ωの判定は未実装です。' };
+    const reqs = [];
+    if (res.C < next.C) { const need = CONTINUITY.tiers[next.C - 1], have = m.continuity || 0; reqs.push({ id: 'continuity', label: CONTINUITY.name, icon: '⏳', have, need, short: Math.max(0, need - have), ratio: Math.min(1, have / need), unit: 'ステップ', met: false, advice: ADVICE.continuity }); }
+    else reqs.push({ id: 'continuity', label: CONTINUITY.name, icon: '⏳', have: m.continuity || 0, need: CONTINUITY.tiers[next.C - 1] || 0, short: 0, ratio: 1, unit: 'ステップ', met: true, advice: ADVICE.continuity });
+    for (const [l, n] of next.K) {
+      const have = res.K[l], met = have >= n, cands = res.axes.filter((a) => !(a.tier !== null && a.tier >= l)).map((a) => {
+        const ax = AXES.find((x) => x.id === a.id), target = AXIS_TARGET(ax, l), v = a.value; let short = null;
+        if (v !== null && target !== null) short = ax.better === 'high' ? Math.max(0, (target - v) / Math.max(1e-9, Math.abs(target))) : Math.max(0, (v - target) / Math.max(1e-9, Math.abs(target)));
+        return { id: a.id, name: a.name, value: v, tier: a.tier, target, better: ax.better, shortRatio: short, why: a.why, advice: ADVICE[a.id], capped: ax.capTier !== undefined && l > ax.capTier };
+      }).filter((c) => !c.capped || false).sort((a, b) => (a.shortRatio === null) - (b.shortRatio === null) || (a.shortRatio || 0) - (b.shortRatio || 0));
+      reqs.push({ id: 'axes-' + l, label: `段階${l}以上の能力軸 ${n}つ`, icon: '🎯', level: l, haveCount: have, needCount: n, short: Math.max(0, n - have), ratio: Math.min(1, have / n), met, candidates: cands });
+    }
+    const done = reqs.reduce((a, r) => a + r.ratio, 0) / reqs.length;
+    return { judged: true, from: cur.id, to: next.id, requirements: reqs, done, note: '能力の足し算ではなく、連続生存期間と、複数の能力軸が段階に届くかどうかで決まります。どの軸でも構いません。' };
+  }
+  return { AXES, CONTINUITY, RANKS, OMEGA, ADVICE, evaluate, progress, tierOf, contTier, order: RANKS.map((r) => r.id) };
 });
