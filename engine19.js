@@ -167,6 +167,7 @@
     abnormal: null, // Stage 2.0: null = off (bit-identical); true or {…} = abnormal-cell (cancer-like) model: arises with cell turnover and damage, grows, is held down by immune surveillance, kills when it gets large
     civ: false, // Stage 2.0: true = accept per-realm / per-lineage pressure from an outside civilisation model (setCiv) and per-lineage strategies (setStance); false = bit-identical
     depth: null, // Stage 3.0: null = off (bit-identical); {T,P,res,act,box} = individuals have a depth/height bin in each realm; a bin outside an individual's temperature-pressure box damages it every step
+    v31: null, // Stage 3.1: null = off (bit-identical); {free,evo,tgt} = free realm crossings, evolution events (exchange / fusion / separation) and per-target stances
     deathRecordCap: Infinity, // live runs of unbounded length keep only this many compact death records (counts and sums are exact regardless)
   };
   // Habitat realms (Stage 1.9B). A realm is a patch with a name and a minimal set of attributes. THESE NUMBERS ARE GAME SETTINGS, NOT
@@ -182,6 +183,8 @@
   ];
   const REALM_ADJ = [[1, 2], [0, 2, 3], [0, 1], [1]]; // water-land, water-underground, land-underground, land-air
   const REALM_DIFF = [[0, 1.0, 1.5, 0], [1.0, 0, 1.0, 1.5], [1.5, 1.0, 0, 0], [0, 1.5, 0, 0]]; // relative crossing difficulty
+  const FREE_DIFF = [[0, 1.0, 1.5, 3.0], [1.0, 0, 1.0, 1.5], [1.5, 1.0, 0, 2.5], [3.0, 1.5, 2.5, 0]]; // Stage 3.1: crossing difficulty between any two realms; the reference roads are the cheap ones, the rest are possible but dear
+  const ALL_ADJ = [[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]];
   const REALM_MOVE = { rate: 0.05, cost: 0.04, reserve: 0.3, start: [1], startByLineage: null };
 
   // resource: plant food per patch per step; prey: prey carrying capacity per
@@ -261,7 +264,7 @@
       bind: Math.floor(r() * MOTIFS), w: (r() - 0.5) * 4 };
   }
   const cloneGene = (g) => ({ ...g, sens: g.sens ? g.sens.slice() : null, eff: g.eff ? g.eff.map((e) => e.slice()) : undefined });
-  const cloneGenome = (g) => ({ genes: g.genes.map(cloneGene), edges: g.edges.map((x) => ({ m: x.m, i: x.i, w: x.w })) });
+  const cloneGenome = (g) => { const c = { genes: g.genes.map(cloneGene), edges: g.edges.map((x) => ({ m: x.m, i: x.i, w: x.w })) }; if (g.tags) c.tags = g.tags; if (g.sym) c.sym = true; return c; };
 
   // Regulatory wiring depends only on the genome, so it is computed once per
   // genome object (clones share the object) and cached on it.
@@ -324,36 +327,37 @@
 
   function mutate(parent, r, maxEdges, nTraits = NL, mo = null) {
     const g = cloneGenome(parent), gs = g.genes;
-    const sup = mo ? mo.supply : 1, sc = mo ? mo.scale : 1;
+    const sup = mo ? mo.supply : 1, sc = mo ? mo.scale : 1, lg = mo && mo.log ? mo.log : null;
     const pick = () => (nTraits > NL && sup !== 1 ? (r() < sup / (NL + sup) ? NL : Math.floor(r() * NL)) : Math.floor(r() * nTraits));
     const ops = 1 + (r() < 0.3 ? 1 : 0);
     for (let n = 0; n < ops; n++) {
       const u = r(), i = Math.floor(r() * gs.length), gene = gs[i];
       if (u < 0.16) { // point: effect weight (structural) or TF strength (regulatory)
-        if (gene.k === 0) { const e = gene.eff[Math.floor(r() * gene.eff.length)]; const k = e[0] === NL ? sc : 1; e[1] = clamp(e[1] + (r() - 0.5) * 0.8 * k, -3 * k, 3 * k); }
-        else gene.w = clamp(gene.w + (r() - 0.5) * 1.5, -4, 4);
+        if (gene.k === 0) { const e = gene.eff[Math.floor(r() * gene.eff.length)]; const k = e[0] === NL ? sc : 1, old = e[1]; e[1] = clamp(e[1] + (r() - 0.5) * 0.8 * k, -3 * k, 3 * k); if (lg) lg.push(e[1] >= old ? 'strengthen' : 'weaken'); }
+        else { const old = gene.w; gene.w = clamp(gene.w + (r() - 0.5) * 1.5, -4, 4); if (lg) lg.push(gene.w >= old ? 'strengthen' : 'weaken'); }
       } else if (u < 0.22) { // substitution: effect target or a new effect
-        if (gene.k === 0) { if (gene.eff.length < 3 && r() < 0.5) { const t = pick(); gene.eff.push([t, (r() - 0.5) * 1.2 * (t === NL ? sc : 1)]); } else gene.eff[Math.floor(r() * gene.eff.length)][0] = pick(); }
-        else gene.bind = Math.floor(r() * MOTIFS);
+        if (gene.k === 0) { if (gene.eff.length < 3 && r() < 0.5) { const t = pick(); gene.eff.push([t, (r() - 0.5) * 1.2 * (t === NL ? sc : 1)]); if (lg) lg.push('newcap'); } else { gene.eff[Math.floor(r() * gene.eff.length)][0] = pick(); if (lg) lg.push('alter'); } }
+        else { gene.bind = Math.floor(r() * MOTIFS); if (lg) lg.push('alter'); }
       } else if (u < 0.28) { // promoter / signal-sensitivity change (rewiring)
         if (r() < 0.6) gene.prom = Math.floor(r() * MOTIFS); else gene.sens = r() < 0.3 ? null : [Math.floor(r() * NDS), (r() - 0.5) * 3];
+        if (lg) lg.push('alter');
       } else if (u < 0.36) { // tandem duplication
-        if (gs.length < MAX_GENES) gs.splice(i + 1, 0, cloneGene(gene));
+        if (gs.length < MAX_GENES) { gs.splice(i + 1, 0, cloneGene(gene)); if (lg) lg.push('newcap'); }
       } else if (u < 0.44) { // deletion
-        if (gs.length > MIN_GENES) gs.splice(i, 1);
+        if (gs.length > MIN_GENES) { gs.splice(i, 1); if (lg) lg.push('loss'); }
       } else if (u < 0.48) { // translocation
-        const [x] = gs.splice(i, 1); gs.splice(Math.floor(r() * (gs.length + 1)), 0, x);
+        const [x] = gs.splice(i, 1); gs.splice(Math.floor(r() * (gs.length + 1)), 0, x); if (lg) lg.push('alter');
       } else if (u < 0.51) { // inversion of a segment
-        const j = Math.min(gs.length, i + 2 + Math.floor(r() * 4)); const seg = gs.slice(i, j).reverse(); gs.splice(i, seg.length, ...seg);
+        const j = Math.min(gs.length, i + 2 + Math.floor(r() * 4)); const seg = gs.slice(i, j).reverse(); gs.splice(i, seg.length, ...seg); if (lg) lg.push('alter');
       } else if (u < 0.55) { // silencing / reactivation
-        gene.on = !gene.on;
+        gene.on = !gene.on; if (lg) lg.push(gene.on ? 'newcap' : 'loss');
       } else if (u < 0.57) { // de novo gene (rare)
-        if (gs.length < MAX_GENES) gs.splice(i, 0, r() < 0.5 ? (() => { const t = pick(); return structural(r, [[t, (r() - 0.5) * 1.2 * (t === NL ? sc : 1)]]); })() : regulatory(r));
+        if (gs.length < MAX_GENES) { gs.splice(i, 0, r() < 0.5 ? (() => { const t = pick(); return structural(r, [[t, (r() - 0.5) * 1.2 * (t === NL ? sc : 1)]]); })() : regulatory(r)); if (lg) lg.push('newcap'); }
       } else if (u < 0.75) { // behaviour circuit: rewire a weight
-        if (g.edges.length) { const x = g.edges[Math.floor(r() * g.edges.length)]; x.w = clamp(x.w + (r() - 0.5) * 1.2, -4, 4); }
+        if (g.edges.length) { const x = g.edges[Math.floor(r() * g.edges.length)]; x.w = clamp(x.w + (r() - 0.5) * 1.2, -4, 4); if (lg) lg.push('behaviour'); }
       } else if (u < 0.88) {
-        if (g.edges.length < maxEdges) g.edges.push({ m: Math.floor(r() * NM), i: Math.floor(r() * NI), w: (r() - 0.5) * 3 });
-      } else if (g.edges.length) g.edges.splice(Math.floor(r() * g.edges.length), 1);
+        if (g.edges.length < maxEdges) { g.edges.push({ m: Math.floor(r() * NM), i: Math.floor(r() * NI), w: (r() - 0.5) * 3 }); if (lg) lg.push('behaviour'); }
+      } else if (g.edges.length) { g.edges.splice(Math.floor(r() * g.edges.length), 1); if (lg) lg.push('behaviour'); }
     }
     return g;
   }
@@ -439,6 +443,87 @@
     const envMod = { resource: 1, thermal: 0, pathogen: 1 }; // external conditions set by a scenario (live mode); neutral by default
     const NICHE = o.niche ? { S: o.niche.slots, w: o.niche.weights, bonus: o.niche.specialistBonus || 0 } : null; // bonus: digestive efficiency on a food rises with how much of the diet it is (a generalist gets factor 1 everywhere)
     const NLN = o.lineageCount, zeros = () => new Array(NLN).fill(0);
+    // Stage 3.1 (all null/false unless o.v31): FREE realm crossings, EVOLUTION events and per-target stances (plants / animals). Everything below is a GAME model; see the design record.
+    const V31 = o.v31 ? { free: o.v31.free !== false, evo: o.v31.evo !== false, tgt: o.v31.tgt !== false } : null;
+    const FREE = !!(V31 && V31.free && RM), offPairs = V31 ? Array.from({ length: NLN }, () => new Array(16).fill(0)) : null;
+    const TG = V31 && V31.tgt ? { plant: zeros(), animal: zeros() } : null;
+    const EV = V31 && V31.evo ? { list: [], nextId: 1, rate: { exchange: 0.0004, fusion: 0.0003, sep: 0.02, ...(o.v31.rates || {}) }, counts: Array.from({ length: NLN }, () => ({ strengthen: 0, weaken: 0, newcap: 0, alter: 0, loss: 0, behaviour: 0, exchange: 0, fusion: 0, separation: 0 })), rand: null } : null;
+    if (EV) EV.rand = rng((o.seed * 7919) ^ 0x3C6EF3);
+    const frRand = V31 ? rng((o.seed * 104729) ^ 0x7F4A7C) : null;
+    if (EV) {
+      EV.t = 0; const CAP = 400, EVN = 5;
+      const CAPS = { mutation: 200, exchange: 100, fusion: 60, separation: 40 };
+      const addEvent = (ev) => { // each kind has its own room, so a flood of one cannot push out the rare ones; a lost event makes room for a new one of its kind; counts are exact regardless
+        const same = EV.list.filter((e) => e.kind === ev.kind);
+        if (same.length >= CAPS[ev.kind]) { const old = same.find((e) => e.status === 'lost' || e.status === 'faded'); if (!old) return null; EV.list.splice(EV.list.indexOf(old), 1); }
+        ev.id = EV.nextId++; ev.t = EV.t; ev.status = 'occurred'; ev.carriers = 0; ev.peak = 0; EV.list.push(ev); return ev;
+      };
+      const tagged = (parent, child, ev) => { if (ev) child.tags = (parent.tags || []).concat(ev.id).slice(-8); else if (parent.tags) child.tags = parent.tags; return child; };
+      // mutation: every one is counted by kind; the notable ones (a new capability, or a large change in a trait) are followed as events
+      EV.afterMutation = (x, child, lg, nT) => {
+        const c = EV.counts[x.lin]; for (const k of lg) c[k]++;
+        const pri = lg.includes('newcap') ? 'newcap' : lg[0]; if (!pri) return child;
+        const pt = genotypeTraits(x.genome), ct = genotypeTraits(child); let bk = -1, bd = 0;
+        for (let k = 0; k < NL; k++) { const [, lo2, hi2] = TRAITS[k], d = (ct[k] - pt[k]) / (hi2 - lo2); if (Math.abs(d) > Math.abs(bd)) { bd = d; bk = k; } }
+        if (!(pri === 'newcap' || Math.abs(bd) >= 0.08)) return child;
+        const ev = addEvent({ kind: 'mutation', sub: Math.abs(bd) >= 0.08 ? (bd > 0 ? 'strengthen' : 'weaken') : pri, lin: x.lin, trait: bk >= 0 ? TRAITS[bk][0] : null, delta: bd });
+        return tagged(x.genome, child, ev);
+      };
+      EV.separate = (x, genome) => {
+        if (EV.rand() >= EV.rate.sep * (x.energy < 0.8 ? 2 : 1)) return genome;
+        const child = cloneGenome(genome); child.genes = child.genes.filter((g) => !g.sym); child.sym = false;
+        if (child.genes.length < MIN_GENES || child.genes.length === genome.genes.length) return genome;
+        EV.counts[x.lin].separation++;
+        return tagged(genome, child, addEvent({ kind: 'separation', sub: 'release', lin: x.lin, trait: null, delta: 0, lost: genome.genes.length - child.genes.length }));
+      };
+      const sameSpot = (a, b) => a !== b && a.patch === b.patch && (!DP || Math.abs(a.zb - b.zb) <= 1);
+      const findPartner = (a, interOnly) => { for (let tries = 0; tries < 8; tries++) { const b = pop[Math.floor(EV.rand() * pop.length)]; if (sameSpot(a, b) && (!interOnly || b.lin !== a.lin)) return b; } return null; };
+      const withGenes = (r, add, ev) => { const ng = cloneGenome(r.genome); for (const g of add) ng.genes.push(g); tagged(r.genome, ng, ev); return ng; };
+      const takeGenes = (d, n, sym) => {
+        const pool = d.genome.genes.filter((g) => g.k === 0 && g.on), out = [];
+        for (let i = 0; i < n && pool.length; i++) { const g = cloneGene(pool.splice(Math.floor(EV.rand() * pool.length), 1)[0]); if (sym) g.sym = true; out.push(g); }
+        return out;
+      };
+      // Horizontal gene transfer: ONE gene at a time, never a finished organ. Known mainly in microbes; the game lets it happen rarely in anything, and far more often during an infection (a virus carries it).
+      const tryExchange = () => {
+        const r = pop[Math.floor(EV.rand() * pop.length)]; if (r.genome.genes.length >= MAX_GENES) return;
+        const d = findPartner(r, false); if (!d) return;
+        const take = (r.load > 0 ? 4 : 1) * (r.genome.genes.length <= 10 ? 1 : 0.5) * (d.lin !== r.lin ? 0.5 : 1);
+        if (EV.rand() >= Math.min(1, take * 0.25)) return;
+        const g = takeGenes(d, 1, false)[0]; if (!g) return; if (EV.rand() < 0.5) g.prom = r.genome.genes[Math.floor(EV.rand() * r.genome.genes.length)].prom; // it has to be wired into the recipient's own regulation
+        const cb = EV.counts[r.lin]; cb.exchange++;
+        const ev = addEvent({ kind: 'exchange', sub: d.lin !== r.lin ? 'inter' : 'intra', via: r.load > 0 ? 'infection' : 'contact', lin: r.lin, from: d.lin, trait: null, delta: 0 });
+        r.genome = withGenes(r, [g], ev); developInto(r, devSignals(patches[r.patch], r.damage));
+      };
+      // Fusion (endosymbiosis-like): a body that can engulf (predation) and does not destroy what it engulfs (low immune reaction) keeps a partner's genes as an internalised symbiont. Rare in nature (mitochondria, plastids); an extension here.
+      const tryFusion = () => {
+        const ai = Math.floor(EV.rand() * pop.length), a = pop[ai]; if (a.age < MATURITY_AGE || a.energy < 1.0 || a.genome.genes.length > MAX_GENES - 3) return;
+        if (EV.rand() >= clamp(a.ph[L.predation] * (1 - 0.6 * a.ph[L.immune]), 0, 1)) return;
+        let b = null, bi = -1; for (let tries = 0; tries < 8; tries++) { const k = Math.floor(EV.rand() * pop.length), c = pop[k]; if (sameSpot(a, c) && c.lin !== a.lin) { b = c; bi = k; break; } }
+        if (!b) return;
+        const genes = takeGenes(b, 2, true); if (!genes.length) return;
+        const ev = addEvent({ kind: 'fusion', sub: 'symbiont', lin: a.lin, from: b.lin, trait: null, delta: 0 }); EV.counts[a.lin].fusion++;
+        const ng = withGenes(a, genes, ev); ng.sym = true; a.genome = ng;
+        const give = Math.min(0.5 * b.energy, a.cap - a.energy); a.energy += give; ledger.lostAtDeath += b.energy - give;
+        causes.fusion = (causes.fusion || 0) + 1; lstat.deaths[b.lin]++; lstat.lifeSum[b.lin] += b.age; lstat.causes[b.lin].fusion = (lstat.causes[b.lin].fusion || 0) + 1; lifeSumRun += b.age; pushDeath([b.age, b.active, b.internal, b.births, b.O, b.Mpeak > 0 ? b.M / b.Mpeak : null, b.hunts, b.catches, b.imPeak > 0 ? b.imS / b.imPeak : null, b.infections, b.imPeak]);
+        pop[bi] = pop[pop.length - 1]; pop.pop(); developInto(a, devSignals(patches[a.patch], a.damage));
+      };
+      const settle = (t) => { // established = still carried by at least 3 individuals 150 steps on; lost = carried by nobody
+        const pending = EV.list.filter((e) => e.status === 'occurred' || e.status === 'established'); if (!pending.length) return;
+        const cnt = new Map(); for (const x of pop) { const tg = x.genome.tags; if (tg) for (const id of tg) cnt.set(id, (cnt.get(id) || 0) + 1); }
+        for (const e of pending) {
+          const n = cnt.get(e.id) || 0, age = t - e.t; e.carriers = n; if (n > e.peak) e.peak = n;
+          if (e.status === 'occurred') { if (age >= 150 && n >= 3) { e.status = 'established'; e.estT = t; } else if (age >= 150 && n === 0) e.status = 'lost'; else if (age >= 800) e.status = 'lost'; }
+          else if (n === 0) e.status = 'faded';
+        }
+      };
+      function evoStep(t) {
+        const n = pop.length;
+        for (const [rate, fn] of [[EV.rate.exchange, tryExchange], [EV.rate.fusion, tryFusion]]) { const a = rate * n; let k = Math.floor(a) + (EV.rand() < a - Math.floor(a) ? 1 : 0); while (k-- > 0 && pop.length > 1) fn(); }
+        if (t % 25 === 0) settle(t);
+      }
+      EV.step = evoStep;
+    }
     const HB = 40, lstat = { hAt: Array.from({ length: o.lineageCount }, () => new Array(HB).fill(0)), hDe: Array.from({ length: o.lineageCount }, () => new Array(HB).fill(0)), dmgIn: zeros(), dmgOut: zeros(), spent: zeros(), dormEnter: zeros(), dormWake: zeros(), dormDeaths: zeros(), maxAgeDead: zeros(), births: zeros(), deaths: zeros(), lifeSum: zeros(), intake: zeros(), catches: zeros(), immigrants: zeros(), causes: Array.from({ length: NLN }, () => ({})) };
     if (NICHE) for (const p of patches) p.slotDemand = new Array(NICHE.S).fill(0);
     const moves = RM ? REALM_DEFS.map(() => REALM_DEFS.map(() => 0)) : null;
@@ -481,6 +566,7 @@
 
     let lastT = 0;
     const stepOnce = (t) => {
+      if (EV) EV.t = t;
       lastT = t;
       if (pop.length === 0 && !o.continueWhenEmpty) { if (extinctAt === null) extinctAt = t - 1; return false; }
 
@@ -568,6 +654,14 @@
           else gain = Math.min(x.demand * prod / (prod + 4), prod * x.demand / (p.demand || 1));
           ledger.intakePlant += gain; p.eaten += gain; lstat.intake[x.lin] += gain;
         }
+        if (TG && gain > 0 && TG.plant[x.lin]) { // stance toward plants / fixed organisms (Stage 3.1). Each needs a body that can do it; without one the attempt wastes effort instead.
+          const sp = TG.plant[x.lin], mn = clamp((metab - 0.2) / 1.4, 0, 1); let mult = 1, extra = 0;
+          if (sp === 1) { const cap = 0.5 * lo[L.movement] + 0.5 * mn; mult = cap >= 0.3 ? 1 + 0.4 * cap : 0.9; extra = cap >= 0.3 ? 0.8 : 0; } // use: eat harder, strip the patch faster
+          else if (sp === 2) { const cap = 0.5 * lo[L.immune] + 0.5 * lo[L.tolerance]; mult = 0.88; extra = -0.3 * cap; } // symbiosis: take less, and the patch recovers a little
+          else if (sp === 3) mult = 0.6; // avoid
+          else if (sp === 4) { const cap = 0.5 * mn + 0.5 * lo[L.movement]; mult = 1 + 0.2 * cap; } // compete
+          const dg = gain * (mult - 1); gain += dg; ledger.intakePlant += dg; lstat.intake[x.lin] += dg; p.eaten += dg * extra;
+        }
         if (CV) { const sb = CV.subsidy[x.lin][x.patch]; if (sb > 0) { gain += sb; ledger.intakePlant += sb; lstat.intake[x.lin] += sb; } }
         let huntCost = 0;
         if (mode === M_HUNT) {
@@ -577,13 +671,14 @@
           if (x.present && p.prey - p.hid >= 1) {
             huntEncounters++;
             const memF = memOn ? x.M : 0;
-            const pc = clamp(1.5 * lo[L.predation] * (0.4 + 0.6 * Math.min(1.2, metab)) * (1 + 0.8 * memF) * o.captureScale, 0, 0.95);
+            const ta = TG ? TG.animal[x.lin] : 0, tmul = ta === 1 ? (lo[L.predation] >= 0.3 ? 1 + 0.3 * lo[L.predation] : 0.85) : ta === 2 ? 0.75 : ta === 3 ? 0.6 : 1;
+            const pc = clamp(1.5 * lo[L.predation] * (0.4 + 0.6 * Math.min(1.2, metab)) * (1 + 0.8 * memF) * o.captureScale * tmul, 0, 0.95);
             if (rand() < pc) {
-              gain += HUNT_GAIN; ledger.intakePrey += HUNT_GAIN; lstat.intake[x.lin] += HUNT_GAIN; lstat.catches[x.lin]++; p.prey -= 1; catches++; x.catches++; x.present = false;
+              const hg = HUNT_GAIN * (ta === 1 && lo[L.predation] >= 0.3 ? 1.25 : 1); gain += hg; ledger.intakePrey += hg; lstat.intake[x.lin] += hg; lstat.catches[x.lin]++; p.prey -= (ta === 2 ? 0.75 : 1); catches++; x.catches++; x.present = false;
               if (o.memory) x.M += lo[L.memoryLearn] * (x.O - x.M) * 0.2;
             }
           }
-          if (rand() < 0.3) { const inj = 0.05 * env.injury * (1 - 0.5 * lo[L.tolerance]); x.damage += inj; lstat.dmgIn[x.lin] += inj; x.dmgSrc[4] += inj; }
+          if (rand() < 0.3) { const ta2 = TG ? TG.animal[x.lin] : 0, imul = ta2 === 1 ? 1.3 : ta2 === 2 ? 0.5 : ta2 === 3 ? 0.4 : ta2 === 4 ? 1 - 0.5 * (0.5 * lo[L.tolerance] + 0.5 * lo[L.repairRate]) : 1; const inj = 0.05 * env.injury * (1 - 0.5 * lo[L.tolerance]) * imul; x.damage += inj; lstat.dmgIn[x.lin] += inj; x.dmgSrc[4] += inj; }
         }
         const locusCost = 0.03 * lo[L.movement] + 0.04 * lo[L.predation] + 0.05 * lo[L.tolerance] + 0.06 * lo[L.immune]
           + 0.05 * ((0.5 - lo[L.falsePositive]) + (0.5 - lo[L.falseNegative])) / 0.48 + x.gcost;
@@ -598,6 +693,7 @@
         let surv = 0, survCost = 0, vig = 0;
         if (AB) { surv = AB.sup * lo[L.immune] * (x.load > 0 ? 0.5 : 1) * (x.energy > 0 ? 1 : 0.3); survCost = AB.cost * surv; if (survCost) spentBy.surveillance = (spentBy.surveillance || 0) + survCost; }
         if (CV) { const st = CV.stance[x.lin]; if ((st === 3 || st === 4) && CV.press[x.patch] > 0) { vig = (st === 3 ? 0.02 : 0.03) * activity; spentBy.vigilance = (spentBy.vigilance || 0) + vig; } if (st === 4 && mode === M_HUNT) CV.attack[x.lin][x.patch] += lo[L.predation] * (0.4 + 0.6 * lo[L.movement]); }
+        if (TG) { const pl = TG.plant[x.lin], an = TG.animal[x.lin], v2 = (pl === 4 ? 0.01 : 0) + (an === 4 && mode === M_HUNT ? 0.015 : 0); if (v2) { vig += v2 * activity; spentBy.vigilance = (spentBy.vigilance || 0) + v2 * activity; } }
         const cost = base + memCost + regenCost + huntCost + x.switchCost + x.acclimCost + storCost + survCost + vig;
         spentBy.acclimation += x.acclimCost; spentBy.storage += storCost;
         spentBy.base += base; spentBy.memory += memCost; spentBy.regeneration += regenCost; spentBy.hunting += huntCost; spentBy.switching += x.switchCost;
@@ -605,7 +701,7 @@
         x.energy += gain - cost;
 
         // infection (exposure depends on mode)
-        const expo = mode === M_EXPLORE || mode === M_HUNT ? 1.5 : mode === M_DORMANT ? 0.5 : 1;
+        const expo = (mode === M_EXPLORE || mode === M_HUNT ? 1.5 : mode === M_DORMANT ? 0.5 : 1) * (TG && TG.plant[x.lin] === 3 ? 0.85 : 1);
         const memF = memOn ? x.M : 0;
         if (x.load <= 0) {
           const pressure = p.pathogen + 0.35 * (p.count ? p.infected / p.count : 0);
@@ -696,7 +792,12 @@
 
         if (mode !== M_DORMANT && mode !== M_TRANSITION && x.age >= MATURITY_AGE && x.energy > OFFSPRING_COST + 0.3 && breedOpen && rand() < 0.7 * (o.fecundityLocked ? FEC0 : lo[L.fecundity]) * o.birthScale) {
           x.energy -= OFFSPRING_COST; ledger.reproOverhead += OFFSPRING_COST - OFFSPRING_ENERGY;
-          const genome = o.mutation && mutRand() < o.mutationRate ? mutate(x.genome, mutRand, o.maxEdges, o.storageEvolvable ? NT : NL, o.storageEvolvable ? { supply: o.storageSupply, scale: o.storageEffectScale } : null) : x.genome;
+          let genome;
+          if (o.mutation && mutRand() < o.mutationRate) {
+            if (EV) { const lg = []; genome = EV.afterMutation(x, mutate(x.genome, mutRand, o.maxEdges, o.storageEvolvable ? NT : NL, { supply: o.storageEvolvable ? o.storageSupply : 1, scale: o.storageEvolvable ? o.storageEffectScale : 1, log: lg }), lg, o.storageEvolvable ? NT : NL); }
+            else genome = mutate(x.genome, mutRand, o.maxEdges, o.storageEvolvable ? NT : NL, o.storageEvolvable ? { supply: o.storageSupply, scale: o.storageEffectScale } : null);
+          } else genome = x.genome;
+          if (EV && genome.sym) genome = EV.separate(x, genome);
           const patch = RM ? x.patch : rand() < o.migrationRate ? Math.floor(rand() * o.patches) : x.patch;
           { const nbx = newborn(genome, patch, OFFSPRING_ENERGY, x.lin); if (DP) nbx.zb = x.zb; next.push(nbx); } lstat.births[x.lin]++; birthTrace[t]++; x.births++; totalBirths++; parentAgeSum += x.age;
         }
@@ -704,10 +805,10 @@
           // Realm movement: only while exploring, only with a reserve, success odds scale with the movement trait, adjacent realms only.
           const mvm = CV ? CV.move[x.patch] * (CV.stance[x.lin] === 1 ? 1.8 : 1) : 1;
           if (mode === M_EXPLORE && x.energy > RM.reserve && rand() < RM.rate * lo[L.movement] * mvm) {
-            const adj = REALM_ADJ[x.patch]; let dest = adj[Math.floor(rand() * adj.length)];
+            const adj = FREE ? ALL_ADJ[x.patch] : REALM_ADJ[x.patch]; let dest = adj[Math.floor(rand() * adj.length)];
             if (CV && CV.stance[x.lin] === 1) { let bp = CV.press[x.patch], best = x.patch; for (const a of adj) if (CV.press[a] < bp) { best = a; bp = CV.press[a]; } if (best !== x.patch) dest = best; } // a fleeing individual heads for the safest neighbouring realm
-            const cost = RM.cost * REALM_DIFF[x.patch][dest];
-            if (x.energy >= cost + RM.reserve) { x.energy -= cost; ledger.spent += cost; lstat.spent[x.lin] += cost; spentBy.moving = (spentBy.moving || 0) + cost; moves[x.patch][dest]++; x.patch = dest; if (DP) x.zb = 0; }
+            const offRef = FREE && !REALM_ADJ[x.patch].includes(dest), cost = RM.cost * (FREE ? FREE_DIFF[x.patch][dest] : REALM_DIFF[x.patch][dest]);
+            if (!(offRef && frRand() > 0.15) && x.energy >= cost + RM.reserve) { x.energy -= cost; ledger.spent += cost; lstat.spent[x.lin] += cost; spentBy.moving = (spentBy.moving || 0) + cost; moves[x.patch][dest]++; if (offRef) offPairs[x.lin][x.patch * 4 + dest]++; x.patch = dest; if (DP) x.zb = 0; }
           }
         } else if (rand() < o.migrationRate * 0.25) x.patch = Math.floor(rand() * o.patches);
         if (DP && DP.act[x.patch] && (mode === M_EXPLORE || mode === M_WAIT || mode === M_HUNT) && x.energy > 0.35 && rand() < DP.rate * (0.3 + 0.7 * lo[L.movement])) {
@@ -723,6 +824,7 @@
       for (const p of patches) { if (p.famine > 0) p.famine--; { const preyFloor = o.preyRefuge * p.preyCap; if (p.prey < preyFloor) { eco.floorAdded += preyFloor - p.prey; p.prey = preyFloor; } } }
       if (next.length > o.maxPopulation) { capHit = true; while (next.length > o.maxPopulation) { const k = Math.floor(rand() * next.length), v = next[k]; ledger.lostAtDeath += v.energy; causes.capacityCull++; lstat.deaths[v.lin]++; lstat.lifeSum[v.lin] += v.age; lstat.causes[v.lin].capacityCull = (lstat.causes[v.lin].capacityCull || 0) + 1; pushDeath([v.age, v.active, v.internal, v.births, v.O, v.Mpeak > 0 ? v.M / v.Mpeak : null, v.hunts, v.catches]); next.splice(k, 1); } }
       pop = next;
+      if (EV && pop.length > 1) EV.step(t);
       popTrace[t] = pop.length;
       { const pf = patches.reduce((a, p) => a + p.prey / p.preyCap, 0) / patches.length; eco.sum += pf; eco.n++; if (pf < eco.min) eco.min = pf; if (t <= 400) { eco.earlySum += pf; eco.earlyN++; } }
       if (LT) { const cnt = new Array(o.lineageCount).fill(0); for (const x of pop) cnt[x.lin]++; for (let k = 0; k < cnt.length; k++) if (cnt[k] === 0 && linExtinctAt[k] === null) linExtinctAt[k] = t; }
@@ -753,6 +855,10 @@
           for (const k of ['res', 'thermal', 'pathogen', 'harm', 'move', 'press']) if (c[k]) for (let i = 0; i < CV[k].length; i++) CV[k][i] = c[k][i];
           for (const k of ['cap', 'subsidy']) if (c[k]) for (let l = 0; l < NLN; l++) if (c[k][l]) for (let i = 0; i < CV[k][l].length; i++) CV[k][l][i] = c[k][l][i];
         },
+        setTarget(lin, kind, code) { if (!TG) throw new Error('v31 tgt option is off'); if (kind !== 'plant' && kind !== 'animal') throw new Error('unknown target'); TG[kind][lin] = code; },
+        routes() { return offPairs ? offPairs.map((a) => a.slice()) : null; }, // per lineage: crossings OUTSIDE the reference roads, indexed from*4+to
+        targets() { return TG ? { plant: TG.plant.slice(), animal: TG.animal.slice() } : null; },
+        evo() { return EV ? { counts: EV.counts.map((c) => ({ ...c })), events: EV.list.map((e) => ({ ...e })), total: EV.nextId - 1 } : null; },
         setStance(lin, code) { if (!CV) throw new Error('civ option is off'); CV.stance[lin] = code; },
         clear() { for (const x of pop) ledger.lostAtDeath += x.energy; pop = []; }, // remove every individual (used by tests to stage an extinction)
         setDepth(d) { if (!DP) throw new Error('depth option is off'); for (const k of ['T', 'P', 'res']) if (d[k]) for (let r = 0; r < d[k].length; r++) for (let b = 0; b < d[k][r].length; b++) DP[k][r][b] = d[k][r][b]; },

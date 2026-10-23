@@ -10,7 +10,7 @@
 <body>
 <div id="start" class="screen">
   <h1>Omega Codon</h1>
-  <p class="sub">地球編（Stage 3.0）。生き物を選び、個体の進化と、生息域の変化、知性文明との対立、長い地球史の大災厄を観察します。</p>
+  <p class="sub">地球編（Stage 3.1）。生き物を選んで見守り、進化・融合・機能交換、生息域の変化、大災厄を観察します。</p>
   <h2>1. 注目する生き物（1〜3種）</h2>
   <div id="creatures"></div>
   <h2>2. 競争相手の数</h2>
@@ -42,6 +42,7 @@
   <div id="rankstrip" role="button"></div>
   <div id="timeline" hidden></div>
   <canvas id="world" width="360" height="260"></canvas>
+  <div id="mapcap" class="mapcap">円の大きさ＝環境支配力（個体数ではない）／点線＝参考の道筋</div>
   <div id="linbar"></div>
   <div id="stratbar"></div>
   <div class="controls">
@@ -71,6 +72,7 @@
 
 <div id="modal" hidden><div class="card" id="modal-card"></div></div>
 <div id="toast" hidden></div>
+<script src="fmt.js"></script>
 <script src="engine19.js"></script>
 <script src="background.js"></script>
 <script src="earthhistory.js"></script>

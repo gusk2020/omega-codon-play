@@ -149,3 +149,32 @@ details{margin-top:8px}summary{color:var(--accent);font-size:14px;padding:8px 0;
 .orow{display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-top:1px solid #243548;font-size:13px}.orow:first-of-type{border-top:0}.orow>span{font-size:18px}.orow small{display:block;color:var(--dim);font-size:11px}
 #linbar-lite{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
 #tab-env canvas#habitat{aspect-ratio:1/1.15}
+
+/* ---------- Stage 3.1: a quieter main screen. Fixed heights so nothing below moves while the game runs ---------- */
+.mapcap{display:none}
+body.s31 .mapcap{display:block;font-size:10.5px;color:var(--dim);line-height:1.3;height:14px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;margin:2px 2px 0}
+body.s31 #hud2{flex-wrap:nowrap;overflow-x:auto;height:30px;align-items:center;margin:0 0 4px}
+body.s31 #hud2 .hchip{flex:0 0 auto}
+body.s31 #hud-sub{white-space:nowrap}
+body.s31 #linbar{flex-wrap:nowrap;overflow-x:auto;height:48px;margin:4px 0 4px;align-items:center;gap:6px}
+body.s31 .lchip{flex:0 0 auto;height:40px;min-height:40px;padding:0 10px;white-space:nowrap}
+body.s31 .lchip b{max-width:7em;overflow:hidden;text-overflow:ellipsis}
+body.s31 #stratbar{height:46px;margin:0 0 6px}
+body.s31 .strow3{display:flex;gap:6px;height:46px}
+body.s31 .tbtn{flex:1;min-width:0;height:46px;background:var(--panel);border:2px solid transparent;border-radius:12px;color:var(--text);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 2px}
+body.s31 .tbtn small{font-size:10.5px;color:var(--dim);line-height:1.1}body.s31 .tbtn span{font-size:13px;white-space:nowrap;line-height:1.2;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+body.s31 .tbtn.on{border-color:var(--accent);background:#1a2c42}
+body.s31 #speedinfo,body.s31 #skipnote,body.s31 #auto-note{display:none}
+body.s31 #ticker{height:38px;padding:0 10px;display:flex;align-items:center;overflow:hidden;margin:4px 0 6px}
+body.s31 .tk1{display:flex;gap:8px;align-items:center;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%}body.s31 .tk1.dim{color:var(--dim)}body.s31 .tk1>div{overflow:hidden;text-overflow:ellipsis}
+body.s31 #rankstrip{height:40px;overflow:hidden;gap:4px}
+body.s31 #rankstrip .rd{flex:1;min-width:0;height:30px;border-radius:8px;background:#0e1621;border:1.5px solid #2c3f55;display:flex;align-items:center;justify-content:center;gap:1px;font-size:13px;position:relative}
+body.s31 #rankstrip .rd i{font-style:normal;font-size:14px}body.s31 #rankstrip .rd em{font-style:normal;font-size:9px;position:absolute;right:2px;bottom:0;line-height:1}
+body.s31 #rankstrip .rd.met{border-color:#46c28a;background:#173528}body.s31 #rankstrip .rd.part{border-color:#9bd36a}body.s31 #rankstrip .rd.near{border-color:#f2d13d}body.s31 #rankstrip .rd.short{border-color:#e5586e}body.s31 #rankstrip .rd.na{opacity:.45}
+.ck{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid #243548}.ck:first-of-type{border-top:0}.ck-i{font-size:20px;width:26px;text-align:center}.ck div{flex:1;min-width:0}.ck b{display:block;font-size:14px}.ck small{display:block;color:var(--dim);font-size:11.5px}.ck em{font-style:normal;font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid #2c3f55;white-space:nowrap}
+.ck.met em{border-color:#46c28a;color:#46c28a}.ck.part em,.ck.near em{border-color:#f2d13d;color:#f2d13d}.ck.short em{border-color:#e5586e;color:#e5586e}.ck.na em{color:var(--dim)}
+.opt{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:var(--panel);border:2px solid transparent;border-radius:12px;color:var(--text);padding:8px 10px;margin:6px 0;min-height:52px}.opt.on{border-color:var(--accent)}.opt .oi{font-size:22px;width:30px;text-align:center}.opt div{flex:1;min-width:0}.opt b{display:block;font-size:14px}.opt small{display:block;color:var(--dim);font-size:11px}.opt .cap{width:84px}.opt .cap .gauge{height:6px}
+.line1{display:flex;gap:10px;align-items:center;padding:8px 2px;border-top:1px solid #243548;font-size:14px}.line1:first-child{border-top:0}.line1>span{font-size:20px;width:26px;text-align:center}
+.evchips{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 6px}.evchips span{background:var(--panel);border-radius:999px;padding:4px 10px;font-size:12.5px}.evchips b{margin-left:6px;color:var(--accent)}
+.evl{display:flex;gap:8px;font-size:13px;padding:4px 0;border-top:1px solid #243548}.evl>span{width:18px;text-align:center}
+.trailbox{margin-top:8px}.trailbox canvas{width:100%;height:200px;border-radius:10px;display:block}.trailbox select{flex:1;min-width:0;background:var(--panel);color:var(--text);border:1px solid #2c3f55;border-radius:8px;padding:6px;font-size:13px}

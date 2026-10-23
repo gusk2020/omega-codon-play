@@ -101,7 +101,7 @@
   }
 
   function createGame(E, cfg, saved) {
-    const S3 = cfg.stage === 3 && cfg.ecology === 'v2' && cfg.time === 'adaptive', ROSTER = S3 ? CREATURES7 : CREATURES; // Stage 3.0 world: seven founders, long history, depth habitat
+    const S3 = (cfg.stage === 3 || cfg.stage === 3.1) && cfg.ecology === 'v2' && cfg.time === 'adaptive', S31 = S3 && cfg.stage === 3.1, ROSTER = S3 ? CREATURES7 : CREATURES; // Stage 3.0 world: seven founders, long history, depth habitat
     const focus = cfg.creatures.map((id) => ROSTER.find((c) => c.id === id)).filter(Boolean);
     const rivalDefs = (cfg.rivals || []).map((id) => ROSTER.find((c) => c.id === id)).filter(Boolean);
     if (!focus.length || focus.length > 3) throw new Error('1〜3種を選んでください');
@@ -119,11 +119,11 @@
     if (!envDef) throw new Error('unknown environment');
     const counts = creatures.map(() => 0); if (v2) { const n = initialIdx.length, per = Math.floor(100 / n); initialIdx.forEach((li, k) => { counts[li] = per + (k < 100 - per * n ? 1 : 0); }); }
     const TB = v2 && cfg.time === 'adaptive'; // Stage 2.0 time base (30 days per step, leaps, civilisation, abnormal cells)
-    const live = E.simulate({ seed: cfg.seed, steps: 1e9, continueWhenEmpty: v2, ...(TB ? { civ: true, abnormal: true, deathRecordCap: 20000 } : {}), ...(S3 ? { depth: { ...NICHE.engineArrays(0), box: NICHE.makeBox(E), bins: NICHE.BINS } } : {}), environment: envDef.engine, resourceRegime: envDef.regime, ...(envDef.scale ? { resourceScale: envDef.scale } : {}), founders: 100, lineageCount: creatures.length,
+    const live = E.simulate({ seed: cfg.seed, steps: 1e9, continueWhenEmpty: v2, ...(TB ? { civ: true, abnormal: true, deathRecordCap: 20000 } : {}), ...(S3 ? { depth: { ...NICHE.engineArrays(0), box: NICHE.makeBox(E), bins: NICHE.BINS } } : {}), ...(S31 ? { v31: {} } : {}), environment: envDef.engine, resourceRegime: envDef.regime, ...(envDef.scale ? { resourceScale: envDef.scale } : {}), founders: 100, lineageCount: creatures.length,
       founderGenomes: creatures.map((c, i) => genomeOf(i)), sampleEvery: 100, live: true,
       ...(v2 ? { founderCounts: counts, niche: { slots: NICHE_SLOTS, weights: creatures.map((c) => c.niche), specialistBonus: NICHE_BONUS } } : {}),
       realms: realmsOn ? { startByLineage: creatures.map((c) => c.startRealm) } : null });
-    const game = { cfg: { creatures: focus.map((c) => c.id), rivals: rivalDefs.map((c) => c.id), seed: cfg.seed, environment, realms: realmsOn, scenario, ecology: v2 ? 'v2' : 'legacy', ...(v2 && cfg.background === false ? { background: false } : {}), ...(TB ? { time: 'adaptive' } : {}), ...(S3 ? { stage: 3, ...(cfg.testStartYears ? { testStartYears: cfg.testStartYears } : {}) } : {}), ...(cfg.checkpoint ? { checkpoint: cfg.checkpoint } : {}) }, creatures, v2, focusCount: focus.length, roleOf, autoContinuous: false, live, events: [], series: [], pending: null, effects: [], log: [], replayTo: null };
+    const game = { cfg: { creatures: focus.map((c) => c.id), rivals: rivalDefs.map((c) => c.id), seed: cfg.seed, environment, realms: realmsOn, scenario, ecology: v2 ? 'v2' : 'legacy', ...(v2 && cfg.background === false ? { background: false } : {}), ...(TB ? { time: 'adaptive' } : {}), ...(S3 ? { stage: S31 ? 3.1 : 3, ...(cfg.testStartYears ? { testStartYears: cfg.testStartYears } : {}) } : {}), ...(cfg.checkpoint ? { checkpoint: cfg.checkpoint } : {}) }, creatures, v2, focusCount: focus.length, roleOf, autoContinuous: false, live, events: [], series: [], pending: null, effects: [], log: [], replayTo: null };
     const extinctAt = new Array(creatures.length).fill(null);
     const lti = KEY_TRAITS.map((n) => E.TRAITS.findIndex((l) => l[0] === n));
     const off = S3 ? OFF.create(cfg.seed) : null;
@@ -438,6 +438,7 @@
       return { realms, dK, boxes, dist, suit, segments: suit ? suit.map((x) => (x ? NICHE.segments(x) : null)) : null, controlled: lin, linkedToEvolution: true,
         note: '箱（適応可能領域）は、いまの系統の平均的な形質（耐性・代謝・修復・休眠）から計算した許容範囲です。点は、実際にその深さ・高さにいる個体です。箱の外の場所では毎ステップ損傷を受けます。箱の中心は進化しません（広さだけ進化します）。温度と圧力の柱は、ゲーム上の仮定（実際の海・地殻・大気をなぞった形）です。' };
     };
+    game.rankChecklist = () => { const l = game.rank.lineages.find((x) => x.lin === controlled); return l ? RK.checklist(l, l.metrics) : null; };
     game.rankProgress = () => { const l = game.rank.lineages.find((x) => x.lin === controlled); return l ? RK.progress(l, l.metrics) : null; };
     game.strategies = () => strategies.slice();
     // What the controlled lineage faces: danger per realm (0..1) from capture hazard, damage and habitat loss, and the overall level.
@@ -456,7 +457,7 @@
         climate: { warm: a.warm, solar: a.warmSolar, civil: a.warmCiv, luminosity: WORLD.luminosity(-WORLD.bp(wm)) },
         civ: c ? { id: c.id, N: c.N, T: c.T, stage: CIVM.stageName(c.T), S: c.S, phase: c.phase, war: c.war, collapses: c.collapses, born: c.born, ageYears: wm.years - c.born, reach: CIVM.reach(c.T) } : null,
         residue: { pollution: r.pollution, conv: r.conv.slice(), stock: r.stock, legacy: r.legacy }, history: wm.civ.history.slice(), count: wm.civ.count, impacts: wm.impacts, volcs: wm.volcs,
-        maxYears: S3 ? wm.maxYears : null, stage3: S3, stances: tb.fx ? tb.fx.stances.slice() : null, attackTotal: tb.attackTotal, attackFrac: tb.attackFrac, emergenceRate: CIVM.emergenceRate(wm.civ, { ...worldCtx(st, lineageTraitMeans()), prod: a.prod, warm: a.warm }) };
+        maxYears: S3 ? wm.maxYears : null, stage3: S3, stage31: S31, stances: tb.fx ? tb.fx.stances.slice() : null, attackTotal: tb.attackTotal, attackFrac: tb.attackFrac, emergenceRate: CIVM.emergenceRate(wm.civ, { ...worldCtx(st, lineageTraitMeans()), prod: a.prod, warm: a.warm }) };
     };
     // The great catastrophes as the player may see them: the standing forecasts (with what they would mean for the lineage being controlled) and every crisis's state.
     game.catInfo = () => {
@@ -511,8 +512,9 @@
           if (last.shares && sh.some((v, i) => Math.abs(v - last.shares[i]) >= 0.25)) { const i = sh.findIndex((v, k) => Math.abs(v - last.shares[k]) >= 0.25); why = { kind: 'lineage', title: '系統の勢力交代', text: `${creatures[i].name}${tag(i)}の割合が${Math.round(last.shares[i] * 100)}%から${Math.round(sh[i] * 100)}%になった。` }; }
         }
         if (!why) { for (let i = 0; i < KEY_TRAITS.length; i++) { const [, mn, mx] = E.TRAITS[lti[i]]; if (Math.abs(tm[i] - last.traits[i]) / (mx - mn) >= 0.2) { why = { kind: 'drift', title: '形質の分岐', text: `${TRAIT_JA[KEY_TRAITS[i]]}が${last.traits[i].toFixed(2)}から${tm[i].toFixed(2)}に動いた。` }; break; } } }
-        if (!why && st.t - last.branchT >= CHECKPOINT_GAP) why = { kind: 'checkpoint', title: '節目', text: `${st.t}ステップ。いまの様子を見て、環境に手を入れるか決めよう。` };
-        if (why) {
+        if (!why && !S31 && st.t - last.branchT >= CHECKPOINT_GAP) why = { kind: 'checkpoint', title: '節目', text: `${st.t}ステップ。いまの様子を見て、環境に手を入れるか決めよう。` };
+        if (why && S31) { addEvent('branch', `${why.title}：${why.text}`); resolveBranch(); } // Stage 3.1: no environmental intervention; the note stays, the pause and the choice are gone
+        else if (why) {
           const ids = why.kind === 'crisis' ? ['watch', 'support', 'refuge'] : ['watch', 'support', 'refuge', 'disaster'];
           game.pending = { ...why, t: st.t, options: ids.concat(['auto']).map((id) => OPTIONS[id]) };
           addEvent('branch', `分岐点：${why.title}`);
@@ -559,6 +561,7 @@
       expire();
       if (live.t % DETECT_EVERY === 0) { updateScenario(); bgTick(); if (TB && live.t > 0) { worldWindow(); leapCheck(); } }
       if (live.t % DETECT_EVERY === 0 || live.done) detect();
+      if (S31 && live.t % DETECT_EVERY === 0) evoNotes();
       if (live.t === nextCp && !game.checkpoint) { if (legacyReplay()) nextCp += cp.every; else game.checkpoint = { t: live.t, kind: 'interval' }; }
       if (replayLog) {
         while (replayPtr < replayLog.length && replayLog[replayPtr].t === live.t) {
@@ -566,6 +569,7 @@
           if (e.kind === 'continue') { if (game.checkpoint) { game.log.push({ ...e }); resolveCheckpoint(); } }
           else if (e.kind === 'strategy') { game.log.push({ ...e }); applyStrategy(e.lin, e.s); }
           else if (e.kind === 'control') { game.log.push({ ...e }); applyControl(e.lin); }
+          else if (e.kind === 'target') { game.log.push({ ...e }); applyTarget(e.lin, e.tg, e.s); }
           else if (e.kind === 'choice') { if (game.pending) { game.log.push({ ...e }); game.pending = null; resolveBranch(); applyEffect(e.id, e.r); } } else { game.log.push({ ...e }); applyEffect(e.kind); }
         }
         if (replayPtr >= replayLog.length && game.replayTo !== null && live.t >= game.replayTo) { replayLog = null; game.replayTo = null; restoreAuto(); }
@@ -583,7 +587,119 @@
       return live.t;
     };
     Object.defineProperty(game, 't', { get: () => live.t });
-    game.save = () => ({ v: S3 ? 7 : TB ? 6 : 5, cfg: game.cfg, t: live.t, log: game.log.map((e) => ({ ...e })), autoContinuous: game.autoContinuous });
+
+    // ======== Stage 3.1 ========
+    // (1) Stances toward three kinds of others, set per lineage (the player never touches the environment).
+    //     civ    : an intelligent civilisation (the existing hostile / coexist / avoid / defend)
+    //     plant  : plants and other fixed organisms (fungi, sessile animals, ...). Grouped by how they live, not by taxon.
+    //     animal : other animals (prey and rivals)
+    //     A stance does nothing by itself: the engine checks whether the body can carry it out (see capability below); without the means it is wasted effort.
+    const TARGETS = {
+      civ: { name: '知性文明', list: [['none', '方針なし', '・'], ['attack', '敵対', '✕'], ['coexist', '共存', '＝'], ['flee', '回避', '↘'], ['defend', '防御', '◇']] },
+      plant: { name: '植物・固着生物', list: [['none', '方針なし', '・'], ['use', '捕食・利用', '🍃'], ['symbiosis', '共生', '🤝'], ['avoid', '回避', '↘'], ['compete', '競争', '⚔']] },
+      animal: { name: '他の動物', list: [['none', '方針なし', '・'], ['hunt', '捕食・敵対', '✕'], ['coexist', '共存', '＝'], ['avoid', '回避', '↘'], ['defend', '防御', '◇']] },
+    };
+    const tg = { plant: creatures.map(() => 'none'), animal: creatures.map(() => 'none') };
+    const clamp01 = (x) => Math.max(0, Math.min(1, x));
+    function traitOf(m, n) { return m.mean[E.TRAITS.findIndex((l) => l[0] === n)]; }
+    // how well the lineage's body can carry out a stance (0..1), from the same traits the engine reads. Below 0.3 the engine counts the attempt as a failure.
+    function capability(lin, target, name) {
+      const m = lineageTraitMeans()[lin]; if (!m) return null; const g = (n) => traitOf(m, n), mn = clamp01((g('metabolism') - 0.2) / 1.4);
+      const table = {
+        civ: { none: 1, attack: g('predation'), coexist: 1, flee: g('movement'), defend: (g('tolerance') + g('immune') + g('repairRate')) / 3 },
+        plant: { none: 1, use: 0.5 * g('movement') + 0.5 * mn, symbiosis: 0.5 * g('immune') + 0.5 * g('tolerance'), avoid: 1, compete: 0.5 * mn + 0.5 * g('movement') },
+        animal: { none: 1, hunt: g('predation'), coexist: 1, avoid: 1, defend: 0.5 * g('tolerance') + 0.5 * g('repairRate') },
+      };
+      const v = table[target][name]; return v === undefined ? null : v;
+    }
+    const needText = { civ: { attack: '捕食力', flee: '移動力', defend: '耐性・免疫・修復' }, plant: { use: '移動力と代謝', symbiosis: '免疫と耐性', compete: '代謝と移動力' }, animal: { hunt: '捕食力', defend: '耐性と修復' } };
+    function applyTarget(lin, tgt, name) {
+      if (tgt === 'civ') return applyStrategy(lin, name);
+      const code = TARGETS[tgt].list.findIndex((x) => x[0] === name); tg[tgt][lin] = name; live.setTarget(lin, tgt, code);
+      addEvent('player', `${creatures[lin].name}の「${TARGETS[tgt].name}」への方針を「${TARGETS[tgt].list[code][1]}」にした`);
+    }
+    game.setTarget = (lin, tgt, name) => {
+      if (!S31 || !TARGETS[tgt] || !TARGETS[tgt].list.some((x) => x[0] === name) || !ever[lin]) return false;
+      if (tgt === 'civ') return game.setStrategy(lin, name);
+      if (tg[tgt][lin] === name) return false;
+      game.log.push({ t: live.t, kind: 'target', lin, tg: tgt, s: name }); applyTarget(lin, tgt, name); return true;
+    };
+    game.targetInfo = (lin = controlled) => {
+      if (!S31) return null;
+      const cur = { civ: strategies[lin], plant: tg.plant[lin], animal: tg.animal[lin] };
+      return { lin, name: creatures[lin].name, targets: Object.keys(TARGETS).map((k) => ({ id: k, name: TARGETS[k].name, current: cur[k], options: TARGETS[k].list.map(([id, label, icon]) => { const cap = capability(lin, k, id); return { id, label, icon, capability: cap, canDo: cap === null ? null : cap >= 0.3, needs: (needText[k] || {})[id] || null }; }) })),
+        note: '方針は、その系統の行動の傾向を決めます。必要な能力が足りない方針は、実行しても失敗します（成功は保証されません）。別の系統に切り替えると、その系統の設定が表示されます。' };
+    };
+    // (2) Dominance over the environment ("環境支配力"). NOT a head count, and nothing here is scaled by how many individuals there are.
+    //     use      how much of the energy it needs one individual actually takes in (per individual per step)
+    //     impact   how much one individual affects others (captures per individual per step)
+    //     persist  how long an individual typically lives
+    //     range    how much of the world it can live in (the box over all depth bins) and where it actually lives (realms with a standing population)
+    //     Not computed yet: dependence on, or effect on, other species beyond the above.
+    //     Weights (0.35 / 0.15 / 0.25 / 0.25) and the scales below are game settings. Fewer than 5 living individuals marks the figure as unreliable; it is not changed.
+    const DOM = { w: { use: 0.35, impact: 0.15, persist: 0.25, range: 0.25 }, useScale: 0.6, impactScale: 0.06, lifeScale: 100 };
+    game.DOM = DOM;
+    function fundamentalFraction(i, H) {
+      const b = H.boxes[i]; if (!b) return null; let ok = 0, n = 0;
+      H.realms.forEach((rl, r) => { if (rl) { const sv = NICHE.suitability(b.active, rl); for (const v of sv) { n++; if (v >= 0.75) ok++; } } else { n++; const T = NICHE.TREF + H.dK[r]; if (T >= b.active[0] && T <= b.active[1]) ok++; } });
+      return n ? ok / n : null;
+    }
+    game.dominance = () => {
+      if (!S31) return null; const st = live.stats(), H = game.habitatInfo(controlled);
+      return creatures.map((c, i) => {
+        if (!ever[i]) return null; const alive = st.lineageAlive[i], w = game.lineageWindow(i, 200);
+        if (!alive || !w) return { lin: i, alive, value: alive ? null : 0, parts: null, reliable: false };
+        const realised = st.realmAlive.filter((m) => m[i] > 0).length / 4, fund = fundamentalFraction(i, H);
+        const parts = { use: clamp01(w.intakePerIndividual / DOM.useScale), impact: clamp01(w.catchRate / DOM.impactScale), persist: clamp01((w.lifespanRecent === null ? 0 : w.lifespanRecent) / DOM.lifeScale), range: 0.5 * realised + 0.5 * (fund === null ? realised : fund) };
+        const value = DOM.w.use * parts.use + DOM.w.impact * parts.impact + DOM.w.persist * parts.persist + DOM.w.range * parts.range;
+        return { lin: i, alive, value, parts, realised, fundamental: fund, reliable: alive >= 5, note: '個体数は含みません' };
+      });
+    };
+    // (3) Evolution events: mutation, internalised symbionts (fusion), their release (separation) and single-gene exchange, with occurrence / establishment / loss told apart.
+    const KIND_JA = { mutation: '突然変異', exchange: '機能交換', fusion: '融合（共生体の内部化）', separation: '分離（共生体の放出）' };
+    const SUB_JA = { strengthen: '強まった', weaken: '弱まった', newcap: '新しい働きが現れた', alter: '働きが変質した', loss: '失われた', behaviour: '行動が変わった', symbiont: '', release: '', inter: '別の系統から', intra: '同じ系統内で' };
+    const TRAIT_ALL_JA = { ...TRAIT_JA, replaceRatio: '細胞の入れ替え', falsePositive: '誤認（空振り）', falseNegative: '見落とし', memoryLearn: '学習', memoryUpkeep: '記憶の維持', switchThreshold: '行動の切り替え', rhythmPeriod: '活動の周期', rhythmPhase: '活動の位相', storage: '貯蔵' };
+    const evoSeen = new Map();
+    function evoText(e, phase) {
+      const nm = creatures[e.lin].name, tr = e.trait ? TRAIT_ALL_JA[e.trait] || e.trait : null;
+      if (e.kind === 'mutation') { const what = e.sub === 'strengthen' ? `${tr || '体質'}が強まった` : e.sub === 'weaken' ? `${tr || '体質'}が弱まった` : e.sub === 'newcap' ? `新しい働きが加わった${tr ? '（' + tr + 'に影響）' : ''}` : e.sub === 'loss' ? '働きが失われた' : '働きが変質した'; return `${nm}：突然変異で${what}${phase === 'established' ? '（定着）' : ''}`; }
+      if (e.kind === 'exchange') return `${nm}：${SUB_JA[e.sub]}遺伝子を1つ受け取った（${e.via === 'infection' ? '感染を介して' : '接触で'}）${phase === 'established' ? '（定着）' : ''}`;
+      if (e.kind === 'fusion') return `${nm}：${creatures[e.from].name}の遺伝子を共生体として内部に取り込んだ${phase === 'established' ? '（定着）' : ''}`;
+      return `${nm}：取り込んでいた共生体の遺伝子を手放した個体が現れた${phase === 'established' ? '（定着）' : ''}`;
+    }
+    const trails = creatures.map(() => []); // each lineage's mean key traits every 200 steps: the route it has taken (a record, nothing steers by it)
+    function evoNotes() {
+      if (live.t % 200 === 0) { const mm = lineageTraitMeans(); mm.forEach((m, i) => { if (m && m.count >= 3) { trails[i].push([live.t, lti.map((k) => m.mean[k])]); if (trails[i].length > 240) trails[i] = trails[i].filter((_, j) => j % 2 === 0); } }); }
+      const ev = live.evo(); if (!ev) return; let budget = 3;
+      for (const e of ev.events) {
+        const prev = evoSeen.get(e.id);
+        if (prev === undefined) { evoSeen.set(e.id, e.status); if (budget > 0 && (e.kind !== 'mutation' || e.sub === 'newcap') && ever[e.lin]) { budget--; addEvent('evo', evoText(e, 'occurred')); } }
+        else if (prev !== e.status) { evoSeen.set(e.id, e.status); if (e.status === 'established' && ever[e.lin] && (e.kind !== 'mutation' || e.sub === 'newcap' || Math.abs(e.delta) >= 0.15)) addEvent('evo', evoText(e, 'established')); }
+      }
+    }
+    game.evoReport = () => {
+      if (!S31) return null; const ev = live.evo(), by = (kind, st) => ev.events.filter((e) => e.kind === kind && (!st || e.status === st)).length;
+      const recent = ev.events.slice(-30).reverse().map((e) => ({ id: e.id, t: e.t, kind: e.kind, kindJa: KIND_JA[e.kind], lin: e.lin, name: creatures[e.lin].name, status: e.status, carriers: e.carriers, text: evoText(e, e.status), inter: e.kind === 'exchange' ? e.sub === 'inter' : e.kind === 'fusion' }));
+      const total = ev.counts.reduce((a, c) => { for (const k in c) a[k] = (a[k] || 0) + c[k]; return a; }, {});
+      return { counts: total, byLineage: ev.counts, tracked: ev.events.length,
+        status: { occurred: ev.events.filter((e) => e.status === 'occurred').length, established: ev.events.filter((e) => e.status === 'established').length, lost: ev.events.filter((e) => e.status === 'lost' || e.status === 'faded').length },
+        fusions: total.fusion || 0, fusionsEstablished: by('fusion', 'established'), exchanges: total.exchange || 0, exchangesEstablished: by('exchange', 'established'), separations: total.separation || 0, recent,
+        basis: { real: '突然変異・水平伝播（微生物で一般的、動物ではまれ）・内部共生（ミトコンドリアなど）は実在する現象です。', game: '頻度、動物でも起こり得るという拡張、感染で水平伝播が増えること、分離の確率はゲーム上の仮定です。完成した器官を丸ごと交換することはありません（遺伝子1つずつ）。', note: '追跡するのは目立つ変化だけです（回数はすべて数えています）。「定着」は150ステップ後に3個体以上が受け継いでいること。' } };
+    };
+    // (4) Unusual evolutionary routes are noted as discoveries. A discovery changes neither survival nor the rank: it is a record, nothing more.
+    game.discoveries = () => {
+      if (!S31) return []; const st = live.stats(), out = [], ev = live.evo(), H = st.realmAlive;
+      const names = ['水中', '地上', '地中', '空中'], op = live.routes();
+      for (let i = 0; i < creatures.length; i++) { if (!ever[i]) continue; op[i].forEach((n, k) => { const a = Math.floor(k / 4), b = k % 4; if (n >= 30 && H[b][i] >= 5) out.push({ id: `rt-${i}-${k}`, lin: i, text: `${creatures[i].name}が、参考ルートの外の経路（${names[a]}→${names[b]}）を${n}回通り、${names[b]}に住みついた`, kind: 'route' }); }); }
+      for (const e of ev.events) if (e.status === 'established' && ever[e.lin]) {
+        if (e.kind === 'fusion') out.push({ id: `f-${e.id}`, lin: e.lin, text: `${creatures[e.lin].name}に、${creatures[e.from].name}由来の共生体が定着`, kind: 'fusion' });
+        else if (e.kind === 'exchange' && e.sub === 'inter') out.push({ id: `x-${e.id}`, lin: e.lin, text: `${creatures[e.lin].name}に、${creatures[e.from].name}の遺伝子が定着（種間の機能交換）`, kind: 'exchange' });
+      }
+      return out;
+    };
+    game.trails = () => (S31 ? { traits: KEY_TRAITS.slice(), names: KEY_TRAITS.map((k) => TRAIT_ALL_JA[k] || k), paths: trails.map((p, i) => ({ lin: i, name: creatures[i].name, color: creatures[i].color, points: p.slice(), start: p.length ? p[0][1] : null })).filter((x) => x.points.length) } : null);
+    game.freeRoutes = () => { if (!S31) return null; const mv = live.stats().moves; if (!mv) return null; const ref = E.REALM_ADJ; let on = 0, off = 0; mv.forEach((row, a) => row.forEach((n, b) => { if (a === b) return; if (ref[a].includes(b)) on += n; else off += n; })); return { reference: on, outside: off }; };
+    game.save = () => ({ v: S31 ? 8 : S3 ? 7 : TB ? 6 : 5, cfg: game.cfg, t: live.t, log: game.log.map((e) => ({ ...e })), autoContinuous: game.autoContinuous });
     // Only values the engine actually computes: living counts, their change over about the last 100 steps, extinction time,
     // and the catches recorded on individuals that are still alive. The prey is a shared background resource, not a lineage,
     // so there is no predator-prey relation between lineages to report; the report says so instead of inventing one.
@@ -604,7 +720,7 @@
     game.lineageWindow = (i, steps = 100) => {
       const st = live.stats(), now = st.lineageStats[i], ref = lsnaps.slice().reverse().find((x) => x.t <= st.t - steps) || lsnaps[0]; if (!ref) return null;
       const dt = st.t - ref.t, a = ref.stats[i]; if (dt <= 0) return null; const avg = Math.max(1, (a.count + now.count) / 2), db = now.births - a.births, dd = now.deaths - a.deaths;
-      return { steps: dt, birthRate: db / avg / dt, deathRate: dd / avg / dt, intakePerIndividual: (now.intake - a.intake) / avg / dt, lifespanRecent: dd > 0 ? (now.lifeSum - a.lifeSum) / dd : null };
+      return { steps: dt, birthRate: db / avg / dt, deathRate: dd / avg / dt, intakePerIndividual: (now.intake - a.intake) / avg / dt, lifespanRecent: dd > 0 ? (now.lifeSum - a.lifeSum) / dd : null, catchRate: (now.catches - a.catches) / avg / dt };
     };
     game.diversity = () => {
       const st = live.stats(), c = st.lineageAlive.filter((n) => n > 0), tot = c.reduce((a, b) => a + b, 0), H = (arr, t) => (t > 0 ? -arr.reduce((a, n) => a + (n > 0 ? (n / t) * Math.log(n / t) : 0), 0) : 0);

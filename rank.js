@@ -99,5 +99,24 @@
     const done = reqs.reduce((a, r) => a + r.ratio, 0) / reqs.length;
     return { judged: true, from: cur.id, to: next.id, requirements: reqs, done, note: '能力の足し算ではなく、連続生存期間と、複数の能力軸が段階に届くかどうかで決まります。どの軸でも構いません。' };
   }
-  return { AXES, CONTINUITY, RANKS, OMEGA, ADVICE, evaluate, progress, tierOf, contTier, order: RANKS.map((r) => r.id) };
+  // ---- Stage 3.1: the same conditions as `progress`, as a short list for the main screen ----
+  // One line per condition of the NEXT rank, in plain words: 達成 (met), 惜しい (within a quarter of the target), 不足, or 未計算 (the data does not exist yet).
+  // It is read from the same `evaluate` result and the same tier tables, so it can never disagree with the rank actually judged; it makes nothing easier.
+  function checklist(res, m) {
+    if (!res || !res.judged) return { judged: false, reason: res ? res.reason : '判定中', items: [] };
+    const next = RANKS[res.rankIndex + 1]; if (!next) return { judged: true, from: RANKS[res.rankIndex].id, to: null, items: [], note: '判定できる範囲の最高です（Ωは未判定）' };
+    const items = [], maxL = Math.max(...next.K.map(([l]) => l)), minL = Math.min(...next.K.map(([l]) => l));
+    if (next.C > 0) { const need = CONTINUITY.tiers[next.C - 1], have = m.continuity || 0; items.push({ id: 'continuity', label: '長期生存', icon: '⏱', status: res.C >= next.C ? 'met' : have >= 0.75 * need ? 'near' : 'short', have, need, unit: 'ステップ' }); }
+    for (const a of res.axes) {
+      const ax = AXES.find((x) => x.id === a.id), shortRatio = (() => { const target = AXIS_TARGET(ax, minL); if (a.value === null || target === null) return null; return ax.better === 'high' ? Math.max(0, (target - a.value) / Math.max(1e-9, Math.abs(target))) : Math.max(0, (a.value - target) / Math.max(1e-9, Math.abs(target))); })();
+      const status = a.value === null ? 'na' : a.tier !== null && a.tier >= maxL ? 'met' : a.tier !== null && a.tier >= minL ? 'part' : shortRatio !== null && shortRatio <= 0.25 ? 'near' : 'short';
+      items.push({ id: a.id, label: SHORT[a.id], icon: ICON[a.id], status, tier: a.tier, value: a.value, why: a.why, target: AXIS_TARGET(ax, minL), unit: ax.unit });
+    }
+    const rules = next.K.map(([l, n]) => ({ level: l, need: n, have: res.K[l], met: res.K[l] >= n }));
+    const contOk = res.C >= next.C, allMet = contOk && rules.every((r) => r.met);
+    return { judged: true, from: RANKS[res.rankIndex].id, to: next.id, items, rules, allMet, note: '段階の高い能力軸の数で決まります（どの軸でも可）。「未計算」は、データがまだ無い軸です。' };
+  }
+  const SHORT = { aging: '老化に強い', repair: '修復力', efficiency: '省エネ', range: '活動域の広さ', dormancy: '休眠の回復', independence: '自力の生存', competition: '競争への強さ' };
+  const ICON = { aging: '⌛', repair: '🩹', efficiency: '🔋', range: '🌐', dormancy: '💤', independence: '🛡', competition: '⚔' };
+  return { AXES, CONTINUITY, RANKS, OMEGA, ADVICE, SHORT, ICON, evaluate, progress, checklist, tierOf, contTier, order: RANKS.map((r) => r.id) };
 });
