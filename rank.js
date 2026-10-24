@@ -116,7 +116,28 @@
     const contOk = res.C >= next.C, allMet = contOk && rules.every((r) => r.met);
     return { judged: true, from: RANKS[res.rankIndex].id, to: next.id, items, rules, allMet, note: '段階の高い能力軸の数で決まります（どの軸でも可）。「未計算」は、データがまだ無い軸です。' };
   }
+  // ---- Stage 4.0: the verdict on a single lineage reaching Omega ----
+  // Omega is judged from what the lineage really does, never from how the disc looks. Every condition must hold at once, for a long stretch, and none is eased by anything:
+  // rank theta; an unbroken individual record three times the top tier; every computed ability axis at its top tier; independence from a civilisation; and a stable codon
+  // (not over-packed, not bloated). `held` is how many steps the lineage has met all of them in a row (kept by the game).
+  const OMEGA_NEED = { continuity: 3 * 4000, held: 2000, packedMax: 0.35, burdenMax: 0.5, redundancyMin: 0.2 };
+  function omega(res, m, ctx) { // ctx: { civAlive, held, codon:{packed, redundancy, burden} | null }
+    if (!res || !res.judged) return { judged: false, achieved: false, criteria: [], reason: res ? res.reason : '判定中' };
+    const maxTier = (id) => { const ax = AXES.find((x) => x.id === id); return ax && ax.capTier !== undefined ? ax.capTier : 4; }; // an axis whose top tiers cannot be measured yet counts at the highest tier it can reach
+    const topAxes = res.axes.filter((a) => a.value !== null), allTop = topAxes.length >= 5 && topAxes.every((a) => a.tier !== null && a.tier >= maxTier(a.id));
+    const indep = res.axes.find((a) => a.id === 'independence'), indepOk = !ctx.civAlive || (indep && indep.tier !== null && indep.tier >= 2);
+    const cd = ctx.codon, codonOk = !!cd && cd.packed <= OMEGA_NEED.packedMax && cd.burden <= OMEGA_NEED.burdenMax && cd.redundancy >= OMEGA_NEED.redundancyMin;
+    const criteria = [
+      { id: 'rank', label: 'ランクθ', met: res.rankIndex >= RANKS.length - 1, have: res.rank, need: 'θ' },
+      { id: 'continuity', label: '途切れない個体の生存', met: (m.continuity || 0) >= OMEGA_NEED.continuity, have: m.continuity || 0, need: OMEGA_NEED.continuity, unit: 'ステップ' },
+      { id: 'axes', label: '全ての能力軸が最高段階', met: allTop, have: topAxes.filter((a) => a.tier >= maxTier(a.id)).length, need: Math.max(5, topAxes.length), unit: '軸' },
+      { id: 'autonomy', label: '文明に頼らない自律', met: indepOk, have: ctx.civAlive ? (indep && indep.tier !== null ? indep.tier : 0) : '文明なし', need: '段階2以上（文明がいる間）' },
+      { id: 'codon', label: 'コドンの安定（詰めすぎず、肥大せず）', met: codonOk, have: cd ? `圧縮${Math.round(cd.packed * 100)}%・冗長${Math.round(cd.redundancy * 100)}%` : '未計算', need: `圧縮${OMEGA_NEED.packedMax * 100}%以下・冗長${OMEGA_NEED.redundancyMin * 100}%以上` },
+      { id: 'held', label: '上の全てを保ち続けた期間', met: (ctx.held || 0) >= OMEGA_NEED.held, have: ctx.held || 0, need: OMEGA_NEED.held, unit: 'ステップ' },
+    ];
+    return { judged: true, achieved: criteria.every((c) => c.met), criteria, provisional: true, need: OMEGA_NEED, allButHeld: criteria.filter((c) => c.id !== 'held').every((c) => c.met) };
+  }
   const SHORT = { aging: '老化に強い', repair: '修復力', efficiency: '省エネ', range: '活動域の広さ', dormancy: '休眠の回復', independence: '自力の生存', competition: '競争への強さ' };
   const ICON = { aging: '⌛', repair: '🩹', efficiency: '🔋', range: '🌐', dormancy: '💤', independence: '🛡', competition: '⚔' };
-  return { AXES, CONTINUITY, RANKS, OMEGA, ADVICE, SHORT, ICON, evaluate, progress, checklist, tierOf, contTier, order: RANKS.map((r) => r.id) };
+  return { AXES, CONTINUITY, RANKS, OMEGA, OMEGA_NEED, ADVICE, SHORT, ICON, evaluate, progress, checklist, omega, tierOf, contTier, order: RANKS.map((r) => r.id) };
 });

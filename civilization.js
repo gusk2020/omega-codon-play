@@ -86,6 +86,7 @@
     w.civ = { id: w.count, born: years, N: par.N0, T: 0.2, S: 0.9, peakN: par.N0, peakT: 0.2, collapses: 0, phase: 'rise', stance: {}, known: {}, war: 0, cogAtBirth: cogExcess, legacyAtBirth: r.legacy, stockAtBirth: r.stock, attackTaken: 0 };
     return { kind: 'civ-emerge', civ: w.civ.id, text: `知性文明が現れた（第${w.count}の文明）。前の文明が残した影響：資源の残り${Math.round(r.stock * 100)}%、遺産${Math.round(r.legacy * 100)}%、環境負荷${r.pollution.toFixed(2)}` };
   }
+  function forceStart(w, cog, text) { const e = startCiv(w, w.years, cog); if (text) e.text = text; return e; }
   function emergenceRate(w, ctx) { // per year
     const par = w.par, r = w.residue;
     const recov = 1 - Math.exp(-Math.max(0, (w.years - w.lastEndOrStart)) / par.recoveryYears);
@@ -101,12 +102,14 @@
     if (!w.civ) {
       // the residue still evolves (pollution fades, conversion is reclaimed); nothing to integrate while there is none
       const r = w.residue; if (r.pollution > 1e-6 || r.conv[0] > 1e-6 || r.conv[1] > 1e-6 || r.conv[2] > 1e-6 || r.conv[3] > 1e-6) integrate(w, env, h, 0.05);
+      if (ctx.noEmerge) return ev; // Stage 4.0: before the present only the first, historical civilisation (forceStart) can exist
       const lam = emergenceRate(w, ctx), p = 1 - Math.exp(-lam * h), u = w.rng();
       if (u < p) ev.push(startCiv(w, w.years, ctx.cog));
       return ev;
     }
     const c = w.civ; integrate(w, env, h, 0.05); c.peakN = Math.max(c.peakN, c.N); c.peakT = Math.max(c.peakT, c.T);
-    if (w.noise) { const n = poisson(w.rng, par.shockRate * (h / 1000) * (0.5 + c.T / 6)); for (let i = 0; i < n; i++) { const d = par.shockMin + (par.shockMax - par.shockMin) * w.rng(); c.S = Math.max(0, c.S - d); c.N *= 1 - 0.12 * w.rng(); } }
+    if (w.noise && !ctx.protect) { const n = poisson(w.rng, par.shockRate * (h / 1000) * (0.5 + c.T / 6)); for (let i = 0; i < n; i++) { const d = par.shockMin + (par.shockMax - par.shockMin) * w.rng(); c.S = Math.max(0, c.S - d); c.N *= 1 - 0.12 * w.rng(); } }
+    if (ctx.protect && c.S < 0.5) c.S = 0.5; // Stage 4.0: the real history of the human civilisation up to the present is not left to chance
     if (c.S < par.collapseS && c.N > par.Nmin) {
       const fN = (par.collapseN[0] + (par.collapseN[1] - par.collapseN[0]) * w.rng()) * Math.pow(par.collapseDecay, c.collapses), fT = par.collapseT[0] + (par.collapseT[1] - par.collapseT[0]) * w.rng(), tBefore = c.T;
       c.N *= fN; c.T *= fT; c.S = 0.55; c.collapses++; c.phase = 'decline'; c.war = 0;
@@ -196,5 +199,5 @@
     const idx = attackPower / Math.max(1, steps), frac = clamp(idx / (60 + 400 * c.T * Math.max(0.05, c.N)), 0, 0.25) * (c.T >= 6 ? 0.2 : 1);
     c.N *= 1 - 0.5 * frac; c.S = Math.max(0, c.S - 0.8 * frac); c.attackTaken += frac; return frac;
   }
-  return { STAGES, PAR, create, step, maxStep, emergenceRate, effects, applyAttack, assess, reach, carrying, deriv, stateVec, integrate, fmtYears, stageName: (T) => STAGES[Math.min(STAGES.length - 1, Math.floor(T))] };
+  return { STAGES, PAR, forceStart, create, step, maxStep, emergenceRate, effects, applyAttack, assess, reach, carrying, deriv, stateVec, integrate, fmtYears, stageName: (T) => STAGES[Math.min(STAGES.length - 1, Math.floor(T))] };
 });

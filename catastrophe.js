@@ -25,6 +25,7 @@
     oceanLoss: { name: '海洋の縮小・喪失', icon: '🏜', science: 'real-kind', text: '太陽の光度が増して海が失われていく。水中の資源が消え、陸は乾いて高温になる。ゆっくり進み、ほぼ元に戻らない。' },
     climateShock: { name: '気候と大気の激変', icon: '🌋', science: 'real-kind', text: '大噴火や気体の放出で、全球が高温・低酸素・酸性になる。数十万年〜数百万年続く。' },
     lunar: { name: '月の破局（作品独自の仮説）', icon: '🌙', science: 'hypothesis', text: '月の破片や軌道の変化で、破片の雨、巨大な潮汐、地軸の揺れが起こる。※科学的に確立した説ではなく、この作品の仮説です。' },
+    glaciation: { name: '全球的な寒冷化（氷河時代）', icon: '🧊', science: 'real-kind', text: '氷床が広がって海と陸が冷え、浅い海と陸の食べ物が減る。数百万〜数千万年続くことがある。' },
     compound: { name: '複合災害', icon: '💥', science: 'mixed', text: '二つの災厄が重なる。' },
   };
   const WEIGHTS = [
@@ -38,10 +39,11 @@
   const pick = (rng, w, skip) => { let tot = 0; for (const [k, v] of Object.entries(w)) if (k !== skip && k !== 'compound') tot += v; let u = rng() * tot; for (const [k, v] of Object.entries(w)) { if (k === skip || k === 'compound') continue; u -= v; if (u <= 0) return k; } return 'impact'; };
   const gauss = (rng) => { let s = 0; for (let i = 0; i < 6; i++) s += rng(); return (s - 3) / 0.7071; };
   // The schedule of the whole history, from the seed alone. `opts.startElapsed` is a TEST-ONLY shortcut: it moves every crisis nearer so that a test can reach one quickly.
-  function schedule(seed) {
+  function schedule(seed, opts = {}) { // opts.offset (Stage 4.0): years from the world's start to the present; the three far-future eras are counted from the present
+    const off = opts.offset || 0;
     const rng = mulberry((seed * 1597334677) ^ 0x3C6EF372), out = [];
     ERAS.forEach((era, i) => {
-      const span = era.to - era.from, onset = era.from + span * (0.1 + 0.8 * rng()), W = WEIGHTS[i];
+      const span = era.to - era.from, onset = off + era.from + span * (0.1 + 0.8 * rng()), W = WEIGHTS[i];
       let type = null; { let u = rng(), acc = 0; for (const [k, v] of Object.entries(W)) { acc += v; if (u <= acc) { type = k; break; } } type = type || 'impact'; }
       const scale = Math.min(era.minScale * 3, era.minScale * Math.exp(Math.abs(gauss(rng)) * 0.3)), sev = 1 - Math.exp(-0.9 * scale);
       const parts = type === 'compound' ? (() => { const a = pick(rng, W), b = pick(rng, W, a); return [a, b]; })() : [type];
@@ -71,6 +73,9 @@
     } else if (kind === 'climateShock') {
       const d = perm + (1 - perm) * dec(tau, c.tauR), up = ramp(tau, 5e3), K = (8 + 14 * sev) * up * d;
       out.dT = [K * 0.6, K, K * 0.4, K]; out.res = [1 - 0.7 * sev * d * up, 1 - 0.5 * sev * d * up, 1 - 0.3 * sev * d * up, 1 - 0.5 * sev * d * up]; out.path = [1 + 0.3 * sev * d, 1 + 0.6 * sev * d, 1 + 0.2 * sev * d, 1 + 0.3 * sev * d]; out.harm = [0.003 * sev * d, 0.004 * sev * d, 0, 0.004 * sev * d];
+    } else if (kind === 'glaciation') { // Stage 4.0: the snowball glaciations and the end-Ordovician cold (history4.js)
+      const d = dec(tau, c.tauR), up = ramp(tau, 2e4), K = -(6 + 18 * sev) * up * d;
+      out.dT = [K * 0.5, K, K * 0.3, K]; out.res = [1 - 0.5 * sev * d * up, 1 - 0.6 * sev * d * up, 1 - 0.2 * sev * d * up, 1 - 0.6 * sev * d * up]; out.harm = [0.001 * sev * d * up, 0.003 * sev * d * up, 0, 0.003 * sev * d * up];
     } else if (kind === 'lunar') {
       const d = perm + (1 - perm) * dec(tau, c.tauR), osc = Math.sin((2 * Math.PI * tau) / 3e4);
       out.dT = [0, 10 * sev * dec(tau, 6e5) * osc, 0, 10 * sev * dec(tau, 6e5) * osc * 0.8]; out.res = [1 - 0.5 * sev * dec(tau, 3e5), 1 - 0.35 * sev * d, 1 - 0.1 * sev * d, 1 - 0.3 * sev * d]; out.harm = [0.004 * sev * dec(tau, 1e5), 0.006 * sev * dec(tau, 1e5), 0, 0.004 * sev * dec(tau, 1e5)];
@@ -93,7 +98,7 @@
   const LEAD = [1, 0.3, 0.05], STAGE_NAME = ['early', 'update', 'imminent'];
   function milestones(cat) {
     const out = [];
-    for (const c of cat) { LEAD.forEach((f, i) => out.push({ t: c.onset - c.lead * f, kind: 'warning', stage: STAGE_NAME[i], stageIndex: i, cat: c.id })); out.push({ t: c.onset, kind: 'onset', cat: c.id }); out.push({ t: c.onset + 2e5, kind: 'aftermath', cat: c.id }); }
+    for (const c of cat) { if (!c.historical) LEAD.forEach((f, i) => out.push({ t: c.onset - c.lead * f, kind: 'warning', stage: STAGE_NAME[i], stageIndex: i, cat: c.id })); out.push({ t: c.onset, kind: 'onset', cat: c.id, ...(c.historical ? { silent: true } : {}) }); out.push({ t: c.onset + 2e5, kind: 'aftermath', cat: c.id, ...(c.historical ? { silent: true } : {}) }); } // a crisis of the past (Stage 4.0) is never forecast and never pauses the game; it is told in the log
     return out.sort((a, b) => a.t - b.t);
   }
   // What the observation model says at a warning stage. Truthful on average, imprecise, and improving. It never reveals more than the schedule holds and
@@ -101,7 +106,7 @@
   function forecast(c, stageIndex, now) {
     const rem = Math.max(0, c.onset - now), width = c.lead * LEAD[stageIndex] * (stageIndex === 0 ? 0.6 : stageIndex === 1 ? 0.35 : 0.15);
     const centre = c.onset + c.fc.timeErr[stageIndex] * width * 0.6, scaleHat = Math.max(0.5, c.scale * Math.exp(c.fc.scaleErr[stageIndex]));
-    const kinds = Object.keys(TYPES).filter((k) => k !== 'compound'); let predicted = c.parts, wrong = false;
+    const kinds = Object.keys(TYPES).filter((k) => k !== 'compound' && k !== 'glaciation'); let predicted = c.parts, wrong = false;
     if (c.fc.wrongType[stageIndex]) { wrong = true; const alt = kinds.filter((k) => !c.parts.includes(k)); predicted = [alt[Math.floor(c.fc.wrongPick * alt.length)]]; }
     const probe = { ...c, parts: predicted, scale: scaleHat, severity: 1 - Math.exp(-0.9 * scaleHat) };
     const e1 = effectsAt([{ ...probe, onset: 0 }], 1e3), e2 = effectsAt([{ ...probe, onset: 0 }], 2e5);

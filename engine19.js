@@ -325,15 +325,40 @@
     return { traits, geneCost: GENE_COST * wiring(genome).len + EXPRESSION_COST * expr };
   }
 
+  // ---- Stage 4.0: the codon model (v31.codon). A GAME ABSTRACTION, not DNA: `len` is the physical length of a gene (cells of the codon strip), `len0` what it
+  // would be unpacked, an effect with |weight| >= 0.15 is one unit of function. Physical length, functional information and the unpacked length are different numbers. ----
+  const codonStats = (g) => {
+    if (g._cd) return g._cd; let Lp = 0, Le = 0, info = 0, n = 0, red = 0; const seen = {};
+    for (const x of g.genes) { Lp += x.len; Le += x.len0 || x.len; if (x.on) { if (x.k === 0) { for (const e of x.eff) if (Math.abs(e[1]) >= 0.15) info++; if (x.eff.length) { n++; seen[x.eff[0][0]] = (seen[x.eff[0][0]] || 0) + 1; } } else info += 0.5; } }
+    for (const x of g.genes) if (x.on && x.k === 0 && x.eff.length && seen[x.eff[0][0]] > 1) red++;
+    return (g._cd = { Lp, Le, info, density: Lp ? info / Lp : 0, redundancy: n ? red / n : 0, packed: Le > 0 ? 1 - Lp / Le : 0 });
+  };
+  let CODON_L0 = 0; const codonL0 = () => CODON_L0 || (CODON_L0 = codonStats(founderGenome()).Lp);
+  const burdenOf = (cd) => Math.max(0, Math.min(2, cd.Lp / codonL0() - 1));
+  function geneFragility(gene, gs) { // a packed gene mutates harder; a gene with a twin that does the same job mutates softer
+    const pk = gene.len0 > gene.len ? 1 - gene.len / gene.len0 : 0; let twin = false;
+    if (gene.k === 0 && gene.eff && gene.eff.length) for (const o of gs) if (o !== gene && o.on && o.k === 0 && o.eff && o.eff.length && o.eff[0][0] === gene.eff[0][0]) { twin = true; break; }
+    return (1 + 2 * pk) * (twin ? 0.4 : 1);
+  }
+  function compressGenes(gs, i, r) { // merge a structural gene with its neighbour: shorter, with some risk to the function it carries
+    const a = gs[i], b = gs[i + 1]; if (!a || !b || a.k !== 0 || b.k !== 0 || !a.on || !b.on) return null;
+    const m = new Map(); for (const [t, w] of a.eff.concat(b.eff)) m.set(t, (m.get(t) || 0) + w);
+    let eff = [...m.entries()].map(([t, w]) => [t, w]).sort((x, y) => Math.abs(y[1]) - Math.abs(x[1])); let lost = 0, damped = false;
+    if (eff.length > 3) { lost += eff.length - 3; eff = eff.slice(0, 3); }
+    if (r() < 0.3) { const f = 0.6 + 0.4 * r(); eff = eff.map(([t, w]) => [t, w * f]); damped = true; } // interference between the merged functions
+    if (eff.length > 1 && r() < 0.15) { eff.pop(); lost++; }
+    const len0 = (a.len0 || a.len) + (b.len0 || b.len), len = Math.max(1, Math.ceil((a.len + b.len) * (0.55 + 0.2 * r())));
+    return { gene: { ...a, eff, len, len0, sens: a.sens || b.sens }, lost, damped, dL: len - (a.len + b.len) };
+  }
   function mutate(parent, r, maxEdges, nTraits = NL, mo = null) {
     const g = cloneGenome(parent), gs = g.genes;
-    const sup = mo ? mo.supply : 1, sc = mo ? mo.scale : 1, lg = mo && mo.log ? mo.log : null;
+    const sup = mo ? mo.supply : 1, sc = mo ? mo.scale : 1, lg = mo && mo.log ? mo.log : null, cdOn = !!(mo && mo.codon);
     const pick = () => (nTraits > NL && sup !== 1 ? (r() < sup / (NL + sup) ? NL : Math.floor(r() * NL)) : Math.floor(r() * nTraits));
     const ops = 1 + (r() < 0.3 ? 1 : 0);
     for (let n = 0; n < ops; n++) {
       const u = r(), i = Math.floor(r() * gs.length), gene = gs[i];
       if (u < 0.16) { // point: effect weight (structural) or TF strength (regulatory)
-        if (gene.k === 0) { const e = gene.eff[Math.floor(r() * gene.eff.length)]; const k = e[0] === NL ? sc : 1, old = e[1]; e[1] = clamp(e[1] + (r() - 0.5) * 0.8 * k, -3 * k, 3 * k); if (lg) lg.push(e[1] >= old ? 'strengthen' : 'weaken'); }
+        if (gene.k === 0) { const e = gene.eff[Math.floor(r() * gene.eff.length)]; const k = e[0] === NL ? sc : 1, old = e[1], fr = cdOn ? geneFragility(gene, gs) : 1; e[1] = clamp(e[1] + (r() - 0.5) * 0.8 * k * fr, -3 * k, 3 * k); if (lg) lg.push(e[1] >= old ? 'strengthen' : 'weaken'); }
         else { const old = gene.w; gene.w = clamp(gene.w + (r() - 0.5) * 1.5, -4, 4); if (lg) lg.push(gene.w >= old ? 'strengthen' : 'weaken'); }
       } else if (u < 0.22) { // substitution: effect target or a new effect
         if (gene.k === 0) { if (gene.eff.length < 3 && r() < 0.5) { const t = pick(); gene.eff.push([t, (r() - 0.5) * 1.2 * (t === NL ? sc : 1)]); if (lg) lg.push('newcap'); } else { gene.eff[Math.floor(r() * gene.eff.length)][0] = pick(); if (lg) lg.push('alter'); } }
@@ -345,8 +370,12 @@
         if (gs.length < MAX_GENES) { gs.splice(i + 1, 0, cloneGene(gene)); if (lg) lg.push('newcap'); }
       } else if (u < 0.44) { // deletion
         if (gs.length > MIN_GENES) { gs.splice(i, 1); if (lg) lg.push('loss'); }
+      } else if (cdOn && u < 0.48) { // Stage 4.0: compression / reorganisation (replaces translocation in codon worlds)
+        const c = compressGenes(gs, i, r); if (c) { gs.splice(i, 2, c.gene); if (lg) { lg.push('compress'); lg.push(c.lost || c.damped ? 'compress-lossy' : 'compress-clean'); } }
       } else if (u < 0.48) { // translocation
         const [x] = gs.splice(i, 1); gs.splice(Math.floor(r() * (gs.length + 1)), 0, x); if (lg) lg.push('alter');
+      } else if (cdOn && u < 0.51 && gene.len0 > gene.len) { // Stage 4.0: unpacking a packed gene again
+        gene.len = gene.len0; delete gene.len0; if (lg) lg.push('unpack');
       } else if (u < 0.51) { // inversion of a segment
         const j = Math.min(gs.length, i + 2 + Math.floor(r() * 4)); const seg = gs.slice(i, j).reverse(); gs.splice(i, seg.length, ...seg); if (lg) lg.push('alter');
       } else if (u < 0.55) { // silencing / reactivation
@@ -446,22 +475,25 @@
     // Stage 3.1 (all null/false unless o.v31): FREE realm crossings, EVOLUTION events and per-target stances (plants / animals). Everything below is a GAME model; see the design record.
     const V31 = o.v31 ? { free: o.v31.free !== false, evo: o.v31.evo !== false, tgt: o.v31.tgt !== false } : null;
     const FREE = !!(V31 && V31.free && RM), offPairs = V31 ? Array.from({ length: NLN }, () => new Array(16).fill(0)) : null;
+    const CD = !!(V31 && o.v31.codon), O2S = V31 && o.v31.o2 ? { v: 1 } : null;
     const TG = V31 && V31.tgt ? { plant: zeros(), animal: zeros() } : null;
-    const EV = V31 && V31.evo ? { list: [], nextId: 1, rate: { exchange: 0.0004, fusion: 0.0003, sep: 0.02, ...(o.v31.rates || {}) }, counts: Array.from({ length: NLN }, () => ({ strengthen: 0, weaken: 0, newcap: 0, alter: 0, loss: 0, behaviour: 0, exchange: 0, fusion: 0, separation: 0 })), rand: null } : null;
+    const EV = V31 && V31.evo ? { list: [], nextId: 1, rate: { exchange: 0.0004, fusion: 0.0003, sep: 0.02, ...(o.v31.rates || {}) }, counts: Array.from({ length: NLN }, () => ({ strengthen: 0, weaken: 0, newcap: 0, alter: 0, loss: 0, behaviour: 0, exchange: 0, fusion: 0, separation: 0, compress: 0, 'compress-lossy': 0, 'compress-clean': 0, unpack: 0 })), rand: null } : null;
     if (EV) EV.rand = rng((o.seed * 7919) ^ 0x3C6EF3);
     const frRand = V31 ? rng((o.seed * 104729) ^ 0x7F4A7C) : null;
     if (EV) {
       EV.t = 0; const CAP = 400, EVN = 5;
-      const CAPS = { mutation: 200, exchange: 100, fusion: 60, separation: 40 };
+      const CAPS = { mutation: 200, exchange: 100, fusion: 60, separation: 40, 'reorg:compress': 60, 'reorg:unpack': 40 };
+      const capKey = (ev) => (ev.kind === 'reorg' ? 'reorg:' + (ev.sub === 'unpack' ? 'unpack' : 'compress') : ev.kind);
       const addEvent = (ev) => { // each kind has its own room, so a flood of one cannot push out the rare ones; a lost event makes room for a new one of its kind; counts are exact regardless
-        const same = EV.list.filter((e) => e.kind === ev.kind);
-        if (same.length >= CAPS[ev.kind]) { const old = same.find((e) => e.status === 'lost' || e.status === 'faded'); if (!old) return null; EV.list.splice(EV.list.indexOf(old), 1); }
+        const key = capKey(ev), same = EV.list.filter((e) => capKey(e) === key);
+        if (same.length >= CAPS[key]) { const old = same.find((e) => e.status === 'lost' || e.status === 'faded'); if (!old) return null; EV.list.splice(EV.list.indexOf(old), 1); }
         ev.id = EV.nextId++; ev.t = EV.t; ev.status = 'occurred'; ev.carriers = 0; ev.peak = 0; EV.list.push(ev); return ev;
       };
-      const tagged = (parent, child, ev) => { if (ev) child.tags = (parent.tags || []).concat(ev.id).slice(-8); else if (parent.tags) child.tags = parent.tags; return child; };
+      const tagged = (parent, child, ev) => { if (ev) { ev.par = parent.tags && parent.tags.length ? parent.tags[parent.tags.length - 1] : null; child.tags = (parent.tags || []).concat(ev.id).slice(-8); } else if (parent.tags) child.tags = parent.tags; return child; };
       // mutation: every one is counted by kind; the notable ones (a new capability, or a large change in a trait) are followed as events
       EV.afterMutation = (x, child, lg, nT) => {
         const c = EV.counts[x.lin]; for (const k of lg) c[k]++;
+        if (CD && (lg.includes('compress') || lg.includes('unpack'))) { const pc = codonStats(x.genome), cc = codonStats(child); return tagged(x.genome, child, addEvent({ kind: 'reorg', sub: lg.includes('unpack') ? 'unpack' : lg.includes('compress-lossy') ? 'compress-lossy' : 'compress', lin: x.lin, trait: null, delta: 0, dL: cc.Lp - pc.Lp, dInfo: cc.info - pc.info })); }
         const pri = lg.includes('newcap') ? 'newcap' : lg[0]; if (!pri) return child;
         const pt = genotypeTraits(x.genome), ct = genotypeTraits(child); let bk = -1, bd = 0;
         for (let k = 0; k < NL; k++) { const [, lo2, hi2] = TRAITS[k], d = (ct[k] - pt[k]) / (hi2 - lo2); if (Math.abs(d) > Math.abs(bd)) { bd = d; bk = k; } }
@@ -485,8 +517,22 @@
         return out;
       };
       // Horizontal gene transfer: ONE gene at a time, never a finished organ. Known mainly in microbes; the game lets it happen rarely in anything, and far more often during an infection (a virus carries it).
+      // Heritage (Stage 4.0): what an extinct lineage left behind, drifting as relics that survivors may pick up. Taking one can fail, and a relic fades. The way a lineage lives
+      // (scavenging, living beside others, avoiding them) changes how often it finds one, but nobody chooses WHICH relic is taken, or hands one over.
+      EV.pool = []; EV.heritageLog = []; EV.heritageN = 0;
+      const geneOfPlain = (pl) => ({ k: 0, prom: pl.prom, sens: pl.sens ? pl.sens.slice() : null, len: pl.len || 1, on: true, eff: pl.eff.map(([n, w]) => [TRAITS.findIndex((l) => l[0] === n) >= 0 ? TRAITS.findIndex((l) => l[0] === n) : NL, w]) });
+      EV.addHeritage = (items) => { for (const it of items) { if (EV.pool.length >= 80) EV.pool.shift(); const rec = { id: 'h' + (++EV.heritageN), from: it.from, kind: it.kind || 'function', plain: it, gene: geneOfPlain(it), born: EV.t, status: 'floating', takers: 0, takenBy: [], takenT: null, fromWorld: !!it.fromWorld }; EV.pool.push(rec); EV.heritageLog.push(rec); if (EV.heritageLog.length > 200) EV.heritageLog.shift(); } };
+      const tryHeritage = (r) => {
+        const it = EV.pool[Math.floor(EV.rand() * EV.pool.length)]; if (!it) return;
+        if (EV.rand() >= Math.min(1, 0.3 * Math.exp(-(EV.t - it.born) / 1500) * (r.load > 0 ? 2 : 1))) return; // it may simply fail
+        const g = cloneGene(it.gene); g.prom = r.genome.genes[Math.floor(EV.rand() * r.genome.genes.length)].prom; if (it.kind === 'symbiont') g.sym = true;
+        EV.counts[r.lin].exchange++; const ev = addEvent({ kind: 'exchange', sub: it.kind === 'symbiont' ? 'heritage-symbiont' : 'heritage', via: 'relic', lin: r.lin, from: it.from, heritage: it.id, trait: null, delta: 0 });
+        const ng = withGenes(r, [g], ev); if (it.kind === 'symbiont') ng.sym = true; r.genome = ng; developInto(r, devSignals(patches[r.patch], r.damage));
+        it.takers++; if (it.status === 'floating') { it.status = 'taken'; it.takenT = EV.t; } if (!it.takenBy.includes(r.lin)) it.takenBy.push(r.lin);
+      };
       const tryExchange = () => {
         const r = pop[Math.floor(EV.rand() * pop.length)]; if (r.genome.genes.length >= MAX_GENES) return;
+        if (EV.pool.length) { const sf = TG ? [1, 1.6, 1.3, 0.6, 1][TG.animal[r.lin]] : 1; if (EV.rand() < 0.25 * sf) { tryHeritage(r); return; } }
         const d = findPartner(r, false); if (!d) return;
         const take = (r.load > 0 ? 4 : 1) * (r.genome.genes.length <= 10 ? 1 : 0.5) * (d.lin !== r.lin ? 0.5 : 1);
         if (EV.rand() >= Math.min(1, take * 0.25)) return;
@@ -498,7 +544,7 @@
       // Fusion (endosymbiosis-like): a body that can engulf (predation) and does not destroy what it engulfs (low immune reaction) keeps a partner's genes as an internalised symbiont. Rare in nature (mitochondria, plastids); an extension here.
       const tryFusion = () => {
         const ai = Math.floor(EV.rand() * pop.length), a = pop[ai]; if (a.age < MATURITY_AGE || a.energy < 1.0 || a.genome.genes.length > MAX_GENES - 3) return;
-        if (EV.rand() >= clamp(a.ph[L.predation] * (1 - 0.6 * a.ph[L.immune]), 0, 1)) return;
+        if (EV.rand() >= clamp(a.ph[L.predation] * (1 - 0.6 * a.ph[L.immune]) * (TG && (TG.plant[a.lin] === 2 || TG.animal[a.lin] === 2) ? 1.5 : 1), 0, 1)) return; // living beside others (symbiosis / coexistence) makes taking a partner in more likely
         let b = null, bi = -1; for (let tries = 0; tries < 8; tries++) { const k = Math.floor(EV.rand() * pop.length), c = pop[k]; if (sameSpot(a, c) && c.lin !== a.lin) { b = c; bi = k; break; } }
         if (!b) return;
         const genes = takeGenes(b, 2, true); if (!genes.length) return;
@@ -508,7 +554,8 @@
         causes.fusion = (causes.fusion || 0) + 1; lstat.deaths[b.lin]++; lstat.lifeSum[b.lin] += b.age; lstat.causes[b.lin].fusion = (lstat.causes[b.lin].fusion || 0) + 1; lifeSumRun += b.age; pushDeath([b.age, b.active, b.internal, b.births, b.O, b.Mpeak > 0 ? b.M / b.Mpeak : null, b.hunts, b.catches, b.imPeak > 0 ? b.imS / b.imPeak : null, b.infections, b.imPeak]);
         pop[bi] = pop[pop.length - 1]; pop.pop(); developInto(a, devSignals(patches[a.patch], a.damage));
       };
-      const settle = (t) => { // established = still carried by at least 3 individuals 150 steps on; lost = carried by nobody
+      const settle = (t) => {
+        for (const it of EV.pool) if (it.takers === 0 && t - it.born > 4000) it.status = 'decayed'; EV.pool = EV.pool.filter((it) => it.status !== 'decayed'); // established = still carried by at least 3 individuals 150 steps on; lost = carried by nobody
         const pending = EV.list.filter((e) => e.status === 'occurred' || e.status === 'established'); if (!pending.length) return;
         const cnt = new Map(); for (const x of pop) { const tg = x.genome.tags; if (tg) for (const id of tg) cnt.set(id, (cnt.get(id) || 0) + 1); }
         for (const e of pending) {
@@ -565,8 +612,10 @@
     sample(0);
 
     let lastT = 0;
+    let spreadDone = false;
     const stepOnce = (t) => {
       if (EV) EV.t = t;
+      if (!spreadDone) { spreadDone = true; if (DP && V31 && o.v31.spread) for (const x of pop) if (DP.act[x.patch]) x.zb = Math.floor(frRand() * DP.bins); } // Stage 4.0: the first cells are spread through the whole water column, not heaped at the surface
       lastT = t;
       if (pop.length === 0 && !o.continueWhenEmpty) { if (extinctAt === null) extinctAt = t - 1; return false; }
 
@@ -685,7 +734,8 @@
         const base = activity * (0.05 + locusCost);
         const memCost = o.memory && o.memoryCost ? 0.02 * lo[L.memoryLearn] + 0.06 * lo[L.memoryUpkeep] * (PR ? x.M + x.imS : x.M) : 0;
         // regeneration
-        const r = lo[L.repairRate] * (mode === M_REPAIR ? 2.5 : mode === M_DORMANT ? 0.5 : 1) * (x.energy > 0 ? 1 : 0.3) * Math.sqrt(Math.min(1.2, metab));
+        const cdS = CD ? codonStats(x.genome) : null;
+        const r = lo[L.repairRate] * (mode === M_REPAIR ? 2.5 : mode === M_DORMANT ? 0.5 : 1) * (x.energy > 0 ? 1 : 0.3) * Math.sqrt(Math.min(1.2, metab)) * (cdS ? 1 - 0.5 * cdS.packed : 1);
         const rho = o.replacement ? lo[L.replaceRatio] : 0;
         const fix = r * (1 - rho), rep = r * rho, eff = 1 / (1 + x.P / 3);
         const regenCost = 0.10 * fix + 0.05 * rep;
@@ -698,6 +748,7 @@
         spentBy.acclimation += x.acclimCost; spentBy.storage += storCost;
         spentBy.base += base; spentBy.memory += memCost; spentBy.regeneration += regenCost; spentBy.hunting += huntCost; spentBy.switching += x.switchCost;
         ledger.spent += cost; lstat.spent[x.lin] += cost;
+        if (O2S && O2S.v < 1 && gain > 0) { const lostO = gain * 0.45 * (1 - O2S.v) * clamp((metab - 0.2) / 1.4, 0, 1); gain -= lostO; ledger.intakePlant -= lostO; lstat.intake[x.lin] -= lostO; } // little oxygen: a high metabolism cannot be fed
         x.energy += gain - cost;
 
         // infection (exposure depends on mode)
@@ -739,7 +790,7 @@
         x.internal += activity;
         const ageing = o.rateOfLiving ? activity : 1;
         const clock = o.rateOfLiving ? x.internal : x.age;
-        const sen = 0.012 * (1 + clock / 25) * ageing;
+        const sen = 0.012 * (1 + clock / 25) * ageing * (CD ? 1 + 0.15 * burdenOf(codonStats(x.genome)) : 1); // a long genome has more to go wrong
         const shelter = mode === M_DORMANT ? 0.5 : 1; // assumption: a dormant body is sheltered (cyst/burrow)
         const th = 0.12 * p.thermal * (1 - lo[L.tolerance]) * shelter;
         const pa = 0.08 * x.load * o.infectionSeverity;
@@ -791,10 +842,10 @@
         }
 
         if (mode !== M_DORMANT && mode !== M_TRANSITION && x.age >= MATURITY_AGE && x.energy > OFFSPRING_COST + 0.3 && breedOpen && rand() < 0.7 * (o.fecundityLocked ? FEC0 : lo[L.fecundity]) * o.birthScale) {
-          x.energy -= OFFSPRING_COST; ledger.reproOverhead += OFFSPRING_COST - OFFSPRING_ENERGY;
+          const oc = CD ? OFFSPRING_COST * (1 + 0.25 * burdenOf(codonStats(x.genome))) : OFFSPRING_COST; x.energy -= oc; ledger.reproOverhead += oc - OFFSPRING_ENERGY; // copying a long genome costs more
           let genome;
           if (o.mutation && mutRand() < o.mutationRate) {
-            if (EV) { const lg = []; genome = EV.afterMutation(x, mutate(x.genome, mutRand, o.maxEdges, o.storageEvolvable ? NT : NL, { supply: o.storageEvolvable ? o.storageSupply : 1, scale: o.storageEvolvable ? o.storageEffectScale : 1, log: lg }), lg, o.storageEvolvable ? NT : NL); }
+            if (EV) { const lg = []; genome = EV.afterMutation(x, mutate(x.genome, mutRand, o.maxEdges, o.storageEvolvable ? NT : NL, { supply: o.storageEvolvable ? o.storageSupply : 1, scale: o.storageEvolvable ? o.storageEffectScale : 1, log: lg, codon: CD }), lg, o.storageEvolvable ? NT : NL); }
             else genome = mutate(x.genome, mutRand, o.maxEdges, o.storageEvolvable ? NT : NL, o.storageEvolvable ? { supply: o.storageSupply, scale: o.storageEffectScale } : null);
           } else genome = x.genome;
           if (EV && genome.sym) genome = EV.separate(x, genome);
@@ -856,6 +907,22 @@
           for (const k of ['cap', 'subsidy']) if (c[k]) for (let l = 0; l < NLN; l++) if (c[k][l]) for (let i = 0; i < CV[k][l].length; i++) CV[k][l][i] = c[k][l][i];
         },
         setTarget(lin, kind, code) { if (!TG) throw new Error('v31 tgt option is off'); if (kind !== 'plant' && kind !== 'animal') throw new Error('unknown target'); TG[kind][lin] = code; },
+        setO2(v) { if (!O2S) throw new Error('v31 o2 option is off'); O2S.v = Math.max(0, Math.min(1, v)); },
+        codon() { // per lineage: means over living individuals (genomes shared by clones are read once per individual)
+          if (!CD) return null; const acc = Array.from({ length: NLN }, () => ({ n: 0, Lp: 0, Le: 0, info: 0, density: 0, redundancy: 0, packed: 0 }));
+          for (const x of pop) { const c = codonStats(x.genome), a = acc[x.lin]; a.n++; a.Lp += c.Lp; a.Le += c.Le; a.info += c.info; a.density += c.density; a.redundancy += c.redundancy; a.packed += c.packed; }
+          return acc.map((a) => (a.n ? { n: a.n, Lp: a.Lp / a.n, Le: a.Le / a.n, info: a.info / a.n, density: a.density / a.n, redundancy: a.redundancy / a.n, packed: a.packed / a.n, L0: codonL0() } : null));
+        },
+        sampleGenome(lin) { // the genome of the individual with the median physical length, as a strip of genes for display
+          const list = pop.filter((x) => x.lin === lin); if (!list.length) return null; list.sort((a, b) => codonStats(a.genome).Lp - codonStats(b.genome).Lp); const g = list[list.length >> 1].genome, cd = codonStats(g);
+          return { stats: { ...cd, L0: codonL0() }, genes: g.genes.map((x) => ({ len: x.len, len0: x.len0 || x.len, on: x.on, reg: x.k !== 0, sym: !!x.sym, eff: x.k === 0 ? x.eff.map(([t, w]) => [TRAITS[t] ? TRAITS[t][0] : 'storage', w]) : [] })) };
+        },
+        addHeritage(items) { if (!EV) throw new Error('v31 evo option is off'); EV.addHeritage(items); },
+        heritage() { return EV ? EV.heritageLog.map((it) => ({ id: it.id, from: it.from, kind: it.kind, born: it.born, status: it.status, takers: it.takers, takenBy: it.takenBy.slice(), takenT: it.takenT, fromWorld: it.fromWorld, eff: it.plain.eff })) : null; },
+        topGenes(lin, k = 3) { // the strongest structural genes of the individual with the median physical length: what a lineage would leave behind
+          const list = pop.filter((x) => x.lin === lin); if (!list.length) return null; list.sort((a, b) => codonStats(a.genome).Lp - codonStats(b.genome).Lp); const g = list[list.length >> 1].genome;
+          return g.genes.filter((x) => x.k === 0 && x.on && x.eff.length).sort((a, b) => Math.max(...b.eff.map((e) => Math.abs(e[1]))) - Math.max(...a.eff.map((e) => Math.abs(e[1])))).slice(0, k).map((x) => ({ prom: x.prom, sens: x.sens ? x.sens.slice() : null, len: x.len, kind: x.sym ? 'symbiont' : 'function', eff: x.eff.map(([t, w]) => [TRAITS[t] ? TRAITS[t][0] : 'storage', w]) }));
+        },
         routes() { return offPairs ? offPairs.map((a) => a.slice()) : null; }, // per lineage: crossings OUTSIDE the reference roads, indexed from*4+to
         targets() { return TG ? { plant: TG.plant.slice(), animal: TG.animal.slice() } : null; },
         evo() { return EV ? { counts: EV.counts.map((c) => ({ ...c })), events: EV.list.map((e) => ({ ...e })), total: EV.nextId - 1 } : null; },

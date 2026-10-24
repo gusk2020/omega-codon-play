@@ -1,6 +1,6 @@
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory(require('./civilization'), require('./catastrophe')); else root.OmegaWorld = factory(root.OmegaCiv, root.OmegaCatastrophe);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (CIV, CAT) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./civilization'), require('./catastrophe'), require('./history4')); else root.OmegaWorld = factory(root.OmegaCiv, root.OmegaCatastrophe, root.OmegaHistory4);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (CIV, CAT, H4) {
   'use strict';
   // The world clock and everything on it that is slow (Stage 2.0): the Sun, the climate it drives, rare catastrophes, and the civilisations (civilization.js).
   //
@@ -27,8 +27,8 @@
   };
   function luminosity(yearsFromNow) { const age = SUN_AGE_NOW + yearsFromNow; return 1 / (1 + 0.4 * (1 - age / SUN_AGE_NOW)); } // L / L_now, standard approximation
   // yearsBP: years before present (negative = future). Temperature offset (K) relative to the world's starting year.
-  function solarAnomaly(yearsBP, par = PAR) {
-    const dF = par.absorbed * (luminosity(-yearsBP) - luminosity(-START_YEARS_BP)); // luminosity(-BP) gives L at BP years in the past
+  function solarAnomaly(yearsBP, par = PAR, baseBP = START_YEARS_BP) {
+    const dF = par.absorbed * (luminosity(-yearsBP) - luminosity(-baseBP)); // luminosity(-BP) gives L at BP years in the past
     return dF * par.sensitivity * (1 - par.buffered);
   }
   // Long history (Stage 3.0): the weathering buffer weakens with time (a GAME ASSUMPTION; the brightening of the Sun itself is the science), so the later eras
@@ -44,12 +44,21 @@
       // `startYears` is a TEST-ONLY shortcut (not reachable from the game screens): begin the world later in its history so that a test can reach an era quickly.
       if (cfg.startYears) { w.years = cfg.startYears; w.civ.years = cfg.startYears; w.civ.lastEndOrStart = cfg.startYears; while (w.msIdx < w.ms.length && w.ms[w.msIdx].t <= w.years) w.msIdx++; }
     }
+    if (cfg.history4 === true) { // Stage 4.0: from the first cells (3.8 billion years ago) through the present into a branching future
+      w.h4 = true; w.long = true; w.startBP = H4.ORIGIN_BP; w.presentYears = H4.ORIGIN_BP;
+      w.par = { ...w.par, impactRate: 1 / 3e8, volcRate: 1 / 1.5e8, quietMax: 1e7 }; // the background rate of big impacts and eruptions is set lower here: the great extinctions of history are scheduled separately
+      w.cat = H4.crises().concat(CAT.schedule(seed, { offset: w.presentYears })); w.ms = CAT.milestones(w.cat); w.msIdx = 0; w.pendingMs = []; w.maxYears = w.presentYears + MAX_YEARS;
+      w.hEv = H4.EVENTS.map((e) => ({ ...e, t: H4.ORIGIN_BP - e.bp })).filter((e) => e.kind !== 'start').sort((a, b) => a.t - b.t); w.hIdx = 0; w.humanStarted = false;
+      if (cfg.startYears) { w.years = cfg.startYears; w.civ.years = cfg.startYears; w.civ.lastEndOrStart = cfg.startYears; while (w.msIdx < w.ms.length && w.ms[w.msIdx].t <= w.years) w.msIdx++; while (w.hIdx < w.hEv.length && w.hEv[w.hIdx].t <= w.years) w.hIdx++; if (bpOf(w) <= H4.FARMING_BP) w.humanStarted = true; } // TEST-ONLY shortcut: begin later in history
+    }
     return w;
   }
-  const bp = (w) => START_YEARS_BP - w.years;
+  const bpOf = (w) => (w.startBP !== undefined ? w.startBP : START_YEARS_BP) - w.years;
+  const bp = bpOf;
   // the ambient conditions at this moment (before the civilisation's own pressures)
   function ambient(w) {
-    const par = w.long ? { ...w.par, buffered: bufferAt(w.years) } : w.par, warmSolar = solarAnomaly(bp(w), par), warmCiv = 1.6 * Math.min(2, w.civ.residue.pollution);
+    const par = w.long ? { ...w.par, buffered: bufferAt(w.h4 ? Math.max(0, w.years - w.presentYears) : w.years) } : w.par, warmCiv = 1.6 * Math.min(2, w.civ.residue.pollution);
+    const warmSolar = w.h4 ? (bp(w) > 0 ? H4.climate(bp(w)) : solarAnomaly(bp(w), par, 0)) : solarAnomaly(bp(w), par); // Stage 4.0: the past follows the climate curve (history4.js); the future follows the brightening Sun from the present
     let cat = null, meanRes = 1, meanDT = 0; if (w.long) { cat = CAT.effectsAt(w.cat, w.years); meanRes = (cat.res[0] + cat.res[1] + cat.res[2] + cat.res[3]) / 4; meanDT = (cat.dT[0] + cat.dT[1] + cat.dT[2] + cat.dT[3]) / 4; }
     const warm = warmSolar + warmCiv + meanDT, base = warmSolar + warmCiv; // `base` is the climate the arena feels everywhere; the catastrophe's own effect reaches it per realm (game.js)
     const prodOf = (x) => clamp(1 + 0.03 * Math.min(x, 3) - 0.07 * Math.max(0, x - 3) - 0.04 * Math.max(0, -x - 2), 0.2, 1.15);
@@ -62,7 +71,8 @@
     const a = ambient(w), c = { cog: ctx.cog, biomass: ctx.biomass, prod: a.prod, warm: a.warm };
     let m = Math.min(CIV.maxStep(w.civ, c), 0.25 / (w.par.impactRate + w.par.volcRate), w.long ? w.par.quietMax * 3 : w.par.quietMax);
     // the climate: keep the temperature drift per leap under 0.4 K
-    const dT = Math.abs(solarAnomaly(bp(w) - 1e6, w.par) - solarAnomaly(bp(w), w.par)) / 1e6; if (dT > 0) m = Math.min(m, 0.4 / dT);
+    const dT = w.h4 ? Math.abs((bp(w) > 1e6 ? H4.climate(bp(w) - 1e6) : solarAnomaly(bp(w) - 1e6, w.par, 0)) - (bp(w) > 0 ? H4.climate(bp(w)) : solarAnomaly(bp(w), w.par, 0))) / 1e6 : Math.abs(solarAnomaly(bp(w) - 1e6, w.par) - solarAnomaly(bp(w), w.par)) / 1e6; if (dT > 0) m = Math.min(m, 0.4 / dT);
+    if (w.h4) { const he = w.hEv[w.hIdx]; if (he) m = Math.min(m, Math.max(1, he.t - w.years)); } // never jump over a dated event of the history
     if (w.civ.civ) m = Math.min(m, w.long && w.civ.civ.T < 3 ? 40000 : 4000); // while a civilisation is alive, leaps stay short: it changes within thousands of years (a society that has not reached industry changes more slowly)
     if (w.long) {
       // never jump over a warning, an onset or an aftermath report: the leap ends exactly at the next milestone
@@ -72,7 +82,7 @@
       m = Math.min(m, Math.max(1, w.maxYears - w.years));
     }
     let out = Math.max(w.civ.civ ? 200 : w.par.quietMin, m);
-    if (w.long) { const nm = w.ms[w.msIdx]; if (nm) out = Math.min(out, Math.max(1, nm.t - w.years)); out = Math.min(out, Math.max(1, w.maxYears - w.years)); } // the floor never carries a leap past a milestone
+    if (w.long) { const nm = w.ms[w.msIdx]; if (nm) out = Math.min(out, Math.max(1, nm.t - w.years)); out = Math.min(out, Math.max(1, w.maxYears - w.years)); if (w.h4) { const he = w.hEv[w.hIdx]; if (he) out = Math.min(out, Math.max(1, he.t - w.years)); } } // the floor never carries a leap past a milestone
     return out;
   }
   // advance the world by h years (h <= safeLeap); returns events [{kind,text,...}] and sets pendingDisaster when a catastrophe falls inside this span
@@ -81,11 +91,21 @@
     // catastrophes: Poisson in this span. A fall-in-the-span is applied at its end as a disturbance of the arena.
     const ni = poisson(w.rng, w.par.impactRate * h), nv = poisson(w.rng, w.par.volcRate * h);
     const c = { cog: ctx.cog, biomass: ctx.biomass, prod: a0.prod, warm: a0.warm };
+    if (w.h4) { const b0 = bp(w); c.noEmerge = b0 > 0; c.protect = b0 > 0 && !!w.civ.civ; } // before the present only the first, historical civilisation exists, and it is not left to chance
     const sub = CIV.step(w.civ, h, c); for (const e of sub) ev.push(e);
     const y0 = w.years; w.years += h;
     if (w.long) {
       const pulse = CAT.pulsesBetween(w.cat, y0, w.years); if (pulse > 0) w.pendingDisaster = Math.max(w.pendingDisaster, pulse);
       while (w.msIdx < w.ms.length && w.ms[w.msIdx].t <= w.years + 1e-3) { const m = w.ms[w.msIdx++]; w.pendingMs.push(m); ev.push(milestoneEvent(w, m)); }
+    }
+    if (w.h4) while (w.hIdx < w.hEv.length && w.hEv[w.hIdx].t <= w.years + 1e-3) {
+      const e = w.hEv[w.hIdx++];
+      if (e.id === 'farming') { if (!w.civ.civ && !w.humanStarted) ev.push(CIV.forceStart(w.civ, ctx.cog, '農耕が始まり、人類の文明が生まれた（最初の高度な文明は現生人類のもの、という設定）')); w.humanStarted = true; }
+      else if (e.id === 'present') {
+        if (!w.civ.civ) { ev.push(CIV.forceStart(w.civ, ctx.cog, '人類の文明（現代）')); w.humanStarted = true; }
+        const cv = w.civ.civ; if (cv) { cv.T = Math.max(cv.T, 6.2); cv.N = Math.max(cv.N, 0.6); cv.S = Math.max(cv.S, 0.7); w.civ.residue.pollution = Math.max(w.civ.residue.pollution, 0.4); } // the modern state is part of the record, not an outcome of the model
+        w.pendingMs.push({ kind: 'present', cpKind: 'present', t: w.years }); ev.push({ kind: 'history', sub: 'present', text: `${e.name}：${e.text}` });
+      } else ev.push({ kind: 'history', sub: e.id, text: `${e.name}：${e.text}` });
     }
     if (ni > 0) { w.impacts += ni; w.pendingDisaster = Math.max(w.pendingDisaster, 1.6); ev.push({ kind: 'impact', text: `巨大な隕石衝突があった（ゲーム上の仮定：発生率は大まかな目安）` }); }
     if (nv > 0) { w.volcs += nv; w.pendingDisaster = Math.max(w.pendingDisaster, 1.0); ev.push({ kind: 'volcanic', text: `巨大火成活動（大量の溶岩と火山ガス）があった` }); }
@@ -94,6 +114,7 @@
   const CATSTAGE_JA = ['早期の予告', '更新された予告', '直前の警告'];
   function milestoneEvent(w, m) {
     const c = w.cat.find((x) => x.id === m.cat);
+    if (c.historical) return m.kind === 'onset' ? { kind: 'cat-onset', cat: c.id, text: `史実：${c.label}が始まった（外部条件：${CAT.TYPES[c.type].name}）。生き物がどうなるかは決まっていない` } : { kind: 'cat-aftermath', cat: c.id, text: `史実：${c.label}から${CIV.fmtYears(w.years - c.onset)}後` };
     if (m.kind === 'warning') { const f = CAT.forecast(c, m.stageIndex, w.years); return { kind: 'cat-warning', cat: c.id, stage: m.stageIndex, text: `⚠ 大災厄の${CATSTAGE_JA[m.stageIndex]}（${c.label}）：${f.kindNames.join('＋')}、規模「${f.scaleClass}」、およそ${CIV.fmtYears(f.remainingYears)}後（誤差の幅 約${CIV.fmtYears(f.windowYears)}）` }; }
     if (m.kind === 'onset') return { kind: 'cat-onset', cat: c.id, text: `大災厄が始まった（${c.label}）：${c.parts.map((k) => CAT.TYPES[k].name).join('＋')}、規模「${CAT.classOf(c.scale)}」。${c.recoverable ? '生態系が回復する余地のある災厄です' : '元に戻らない環境の変化をともないます'}` };
     return { kind: 'cat-aftermath', cat: c.id, text: `大災厄（${c.label}）の${CIV.fmtYears(w.years - c.onset)}後` };
@@ -109,8 +130,9 @@
     if (!w.long) return []; return w.cat.map((c) => { const began = w.years >= c.onset, tau = w.years - c.onset; return { id: c.id, era: c.era, label: c.label, setting: c.setting, state: !began ? (activeForecasts(w).some((f) => f.cat === c.id) ? 'warned' : 'future') : tau < 2e5 ? 'active' : tau < 3 * c.tauR ? 'aftermath' : 'past',
       onset: began ? c.onset : null, kinds: began ? c.parts : null, kindNames: began ? c.parts.map((k) => CAT.TYPES[k].name) : null, scale: began ? c.scale : null, scaleClass: began ? CAT.classOf(c.scale) : null, recoverable: began ? c.recoverable : null, hypothesis: began ? c.parts.includes('lunar') : null }; });
   }
+  const h4Conditions = (w) => (w.h4 ? H4.conditions(bp(w)) : null);
   const catEffects = (w) => (w.long ? CAT.effectsAt(w.cat, w.years) : null);
   function poisson(rng, lam) { if (lam <= 0) return 0; if (lam > 30) return Math.round(lam); const L = Math.exp(-lam); let k = 0, p = 1; do { k++; p *= rng(); } while (p > L && k < 80); return k - 1; }
-  function formatBP(w) { const y = bp(w); if (y >= 1e8) return `${(y / 1e8).toFixed(2)}億年前`; if (y >= 1e4) return `${(y / 1e4).toFixed(y >= 1e7 ? 0 : 1)}万年前`.replace(/^(\d+)\.0万/, '$1万'); if (y > 0) return `${Math.round(y)}年前`; return `いまから約${CIV.fmtYears(-y)}後`; }
-  return { DAYS_PER_STEP, YEARS_PER_STEP, START_YEARS_BP, MAX_YEARS, PAR, bufferAt, luminosity, solarAnomaly, create, ambient, safeLeap, advance, bp, formatBP, activeForecasts, catStatus, catEffects, civ: CIV, cat: CAT };
+  function formatBP(w) { const y = bp(w); if (y >= 1e8) return `${(y / 1e8).toFixed(2)}億年前`; if (y >= 1e4) return `${(y / 1e4).toFixed(y >= 1e7 ? 0 : 1)}万年前`.replace(/^(\d+)\.0万/, '$1万'); if (y > 0) return `${Math.round(y)}年前`; return y > -1 ? '現代' : `いまから約${CIV.fmtYears(-y)}後`; }
+  return { DAYS_PER_STEP, YEARS_PER_STEP, START_YEARS_BP, MAX_YEARS, PAR, bufferAt, luminosity, solarAnomaly, create, ambient, safeLeap, advance, bp, formatBP, activeForecasts, catStatus, catEffects, h4Conditions, h4: H4, civ: CIV, cat: CAT };
 });

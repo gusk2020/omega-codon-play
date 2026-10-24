@@ -10,7 +10,8 @@
 <body>
 <div id="start" class="screen">
   <h1>Omega Codon</h1>
-  <p class="sub">地球編（Stage 3.1）。生き物を選んで見守り、進化・融合・機能交換、生息域の変化、大災厄を観察します。</p>
+  <p class="sub">原始の海の単細胞から、現代、その先の未来史まで。8つの系統の勢力争い、進化・融合・遺産の継承、大災厄を、放置して見守ります。</p>
+  <div id="legacy-setup" hidden>
   <h2>1. 注目する生き物（1〜3種）</h2>
   <div id="creatures"></div>
   <h2>2. 競争相手の数</h2>
@@ -24,7 +25,12 @@
   <h2>5. 時間の方式</h2>
   <div id="timemodes" class="chips"></div>
   <p id="timemode-note" class="note"></p>
-  <h2>6. 乱数の種</h2>
+  </div>
+  <h2>モード</h2>
+  <div id="modes" class="chips"></div>
+  <p id="mode-note" class="note"></p>
+
+  <h2>乱数の種</h2>
   <div class="row"><input id="seed" type="number" inputmode="numeric" min="1" value="1"><button id="reseed" class="btn small">ランダム</button></div>
   <button id="go" class="btn primary big">進化を始める</button>
   <h2>セーブデータ</h2>
@@ -52,8 +58,14 @@
   <div class="row3"><button id="skip" class="btn small">⏭ 次の出来事まで</button><button id="auto" class="chip">自動：OFF</button><button id="save" class="btn small">保存</button></div>
   <div id="speedinfo" class="note"></div><span id="skipnote" class="note"></span><span class="note" id="auto-note" hidden></span>
   <div id="ticker"></div>
+  <div id="detailnav" class="chips" hidden></div>
   <nav id="tabs"><button data-tab="world" class="on">世界</button><button data-tab="stat">状況</button><button data-tab="ind">個体</button><button data-tab="rank">ランク</button><button data-tab="trait">形質</button><button data-tab="graph">推移</button><button data-tab="env">環境</button><button data-tab="log">履歴</button></nav>
-  <section id="tab-world"></section>
+  <section id="tab-codex"></section>
+  <section id="tab-phylo" hidden></section>
+  <section id="tab-codon" hidden></section>
+  <section id="tab-feats" hidden></section>
+  <section id="tab-about" hidden></section>
+  <section id="tab-world" hidden></section>
   <section id="tab-stat" hidden></section>
   <section id="tab-ind" hidden></section>
   <section id="tab-rank" hidden></section>
@@ -79,6 +91,9 @@
 <script src="adaptation.js"></script>
 <script src="civilization.js"></script>
 <script src="catastrophe.js"></script>
+<script src="history4.js"></script>
+<script src="dish.js"></script>
+<script src="codex4.js"></script>
 <script src="world.js"></script>
 <script src="niche.js"></script>
 <script src="offworld.js"></script>
