@@ -96,6 +96,8 @@
   $('pp').onclick = () => { if (!game || game.pending || game.checkpoint || game.isOver || loading) return; playing = !playing; setPP(); };
   $('save').onclick = () => { if (!game) return; playing = false; setPP(); openMenu(true); };
   $('menu').onclick = () => { if (!game) return; playing = false; setPP(); openMenu(false); };
+  // Writes that would put in the very same markup are skipped: it keeps the page from being rebuilt several times a second at high speed (and keeps buttons stable under a finger).
+  (() => { const wrap = (el, prop) => { const desc = Object.getOwnPropertyDescriptor(prop === 'innerHTML' ? Element.prototype : Node.prototype, prop); let last = null; Object.defineProperty(el, prop, { configurable: true, get() { return desc.get.call(this); }, set(v) { if (v === last) return; last = v; desc.set.call(this, v); } }); }; for (const id of ['hud2', 'hud-rank', 'rankstrip', 'ticker', 'tab-codex', 'tab-feats', 'tab-log']) wrap($(id), 'innerHTML'); for (const id of ['hud-era', 'hud-sub']) wrap($(id), 'textContent'); })();
   const TABS_ORIG = $('tabs').innerHTML;
   $('tabs').addEventListener('click', (ev) => { const b = ev.target.closest('button'); if (!b) return; const t = b.dataset.tab; setTab(t === 'detail' ? detailSub : t); });
 
@@ -126,13 +128,13 @@
 
   function loadSlot(k) {
     const sv = readSaves()[k]; if (!sv) return;
-    let g; try { g = G.loadGame(E, sv); } catch (e) { toast('読み込めませんでした'); return; }
+    let g; try { g = G.loadGame(E, sv); } catch (e) { toast(String(e.message || '').startsWith('セーブが壊れています') ? e.message : '読み込めませんでした'); return; }
     playing = false; loading = { g, target: sv.t, savedAt: sv.ts };
     const card = $('modal-card'); card.innerHTML = `<h3>読み込み中…</h3><p class="note">${sv.label}<br>保存した地点まで再現しています（同じ結果になります）。</p><div class="prog"><div id="prog"></div></div>`;
     $('modal').hidden = false; $('start').hidden = true; $('play').hidden = false;
     const tick = () => {
       const t0 = performance.now();
-      while (loading.g.replayTo !== null && performance.now() - t0 < 14) loading.g.advance(20);
+      try { while (loading.g.replayTo !== null && performance.now() - t0 < 14) loading.g.advance(20); } catch (err) { loading = null; $('modal').hidden = true; $('play').hidden = !game; $('start').hidden = !!game; toast('セーブの再生に失敗しました（保存データは消していません）'); if (game) { playing = false; setPP(); } return; } // never leave the loading screen standing
       $('prog').style.width = Math.min(100, (loading.g.t / Math.max(1, loading.target)) * 100) + '%';
       if (loading.g.replayTo !== null) requestAnimationFrame(tick); else { const gg = loading.g; const away = loading.savedAt ? Date.now() - loading.savedAt : 0; loading = null; begin(gg); playing = !gg.pending; setPP(); toast(gg.cfg.stage === 4 && away > 600000 ? '読み込みました。閉じていた間は進んでいません（実際に計算していない期間の出来事は作りません）' : '読み込みました'); }
     };
@@ -149,7 +151,7 @@
     if (playing && !game.pending && !game.checkpoint && !game.isOver) {
       const t0 = performance.now();
       if (skipping) {
-        while (performance.now() - t0 < 12 && !game.pending && !game.checkpoint && !game.isOver) { game.advance(25); if (game.events.slice(skipping.n0).some((e) => STOP_KINDS.has(e.kind)) || game.t - skipping.t0 >= MAX_SKIP) { stopSkip(false); break; } }
+        while (performance.now() - t0 < 12 && !game.pending && !game.checkpoint && !game.isOver) { game.advance(25); if (game.eventsSince(skipping.seq0).some((e) => STOP_KINDS.has(e.kind)) || game.t - skipping.t0 >= MAX_SKIP) { stopSkip(false); break; } }
         if (skipping) $('skipnote').textContent = `早送り中… ${(game.t - skipping.t0).toLocaleString('ja-JP')}ステップ`; else acc = 0;
       } else {
         acc += dt * SPEEDS[speedIdx]; const budget = speedIdx >= 4 ? 11 : 8, chunk = speedIdx >= 4 ? 25 : 10;
@@ -549,11 +551,11 @@
     $('modal').hidden = false;
   }
   // fast-forward to the next notable event (at most MAX_SKIP steps), then stop and show what happened
-  let skipping = null; const STOP_KINDS = new Set(['lineage', 'dominance', 'collapse', 'crisis', 'rank', 'background', 'branch', 'trait', 'civ', 'world']), MAX_SKIP = 30000;
-  function startSkip() { if (!game || game.pending || game.checkpoint || game.isOver || loading) return; if (skipping) { stopSkip(true); return; } skipping = { t0: game.t, n0: game.events.length }; playing = true; setPP(); $('skip').textContent = '■ 止める'; }
+  let skipping = null; const STOP_KINDS = new Set(['lineage', 'dominance', 'collapse', 'crisis', 'rank', 'background', 'branch', 'trait', 'civ', 'world', 'codex', 'omega']), MAX_SKIP = 30000;
+  function startSkip() { if (!game || game.pending || game.checkpoint || game.isOver || loading) return; if (skipping) { stopSkip(true); return; } skipping = { t0: game.t, n0: game.events.length, seq0: game.eventSeq }; playing = true; setPP(); $('skip').textContent = '■ 止める'; }
   function stopSkip(manual) {
     if (!skipping) return; const sk = skipping; skipping = null; $('skip').textContent = S31() ? '⏭ 次の出来事' : '⏭ 次の出来事まで早送り'; $('skipnote').textContent = ''; playing = false; setPP();
-    if (game.pending || game.checkpoint) return; const ev = game.events.slice(sk.n0).filter((e) => e.kind !== 'disaster');
+    if (game.pending || game.checkpoint) return; const ev = game.eventsSince(sk.seq0).filter((e) => e.kind !== 'disaster');
     const card = $('modal-card'); card.className = 'card'; card.innerHTML = `<h3>${manual ? '早送りを止めました' : ev.some((e) => STOP_KINDS.has(e.kind)) ? '出来事がありました' : `${NUM(MAX_SKIP)}ステップ進めましたが、目立った出来事はありませんでした`}</h3><p class="note">${(game.t - sk.t0).toLocaleString('ja-JP')}ステップ進みました。</p>` + (ev.length ? ev.slice(-12).map((e) => `<div class="ev ${e.kind}"><small>${e.t.toLocaleString('ja-JP')}ステップ</small>${e.text}</div>`).join('') : '');
     const b = document.createElement('button'); b.className = 'btn primary big'; b.textContent = '確認した（閉じる）'; b.onclick = () => { $('modal').hidden = true; draw(true); }; card.appendChild(b); $('modal').hidden = false; draw(true);
   }
@@ -1004,7 +1006,8 @@
   // ---- the dish ----
   const dishOff = document.createElement('canvas'); dishOff.width = dishOff.height = 168; const dctx = dishOff.getContext('2d'); let dishImg = null;
   const hex = (c) => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
-  let dishC = { k: -1, g: null, v: null }, secSmooth = null;
+  let dishC = { k: -1, g: null, v: null }, secSmooth = null, dishPainted = null;
+  const NOISE = new Float32Array(168 * 168); for (let y = 0; y < 168; y++) for (let x = 0; x < 168; x++) NOISE[y * 168 + x] = hash(x, y) - 0.5; // the edge jitter, computed once
   const dishNow = () => { const k = Math.floor(game.t / 25); if (dishC.k !== k || dishC.g !== game) dishC = { k, g: game, v: game.dish() }; return dishC.v; };
   function picto(c, kind, x, y, s, col) {
     c.save(); c.strokeStyle = col; c.fillStyle = col; c.lineWidth = 1.4; c.lineCap = 'round'; c.lineJoin = 'round'; c.translate(x, y);
@@ -1021,11 +1024,13 @@
     // sector widths are smoothed so that the layout drifts instead of jumping
     const target = d.sectors.map((s) => s.a0); if (!secSmooth || secSmooth.g !== game) secSmooth = { g: game, a: target.slice() }; for (let k = 0; k < 4; k++) secSmooth.a[k] += (target[k] - secSmooth.a[k]) * 0.25;
     // the territories, painted pixel by pixel on a small canvas and scaled up (soft, colony-like edges)
-    const N = dishOff.width, id = dctx.createImageData(N, N), px = id.data, A = d.A, R = d.R, cols = d.colors.map(hex), foc = d.focus;
+    const N = dishOff.width, A = d.A, R = d.R;
+    if (dishPainted !== d) { // the picture changes only when the dish is recomputed (every 25 steps); in between the painted image is simply drawn again
+    const id = dctx.createImageData(N, N), px = id.data, cols = d.colors.map(hex), foc = d.focus;
     for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
       const dx = (x + 0.5 - N / 2) / (N / 2), dy = (y + 0.5 - N / 2) / (N / 2), r = Math.sqrt(dx * dx + dy * dy), o = (y * N + x) * 4;
       if (r > 1) { px[o + 3] = 0; continue; }
-      const noise = (hash(x, y) - 0.5) * 0.9, f = ((Math.atan2(dx, -dy) / (2 * Math.PI)) + 1) % 1, ai = Math.max(0, Math.min(A - 1, Math.floor(f * A + noise))), ri = Math.max(0, Math.min(R - 1, Math.round(r * (R - 1) + noise))), k = ri * A + ai, ow = d.owner[k];
+      const noise = NOISE[y * N + x] * 0.9, f = ((Math.atan2(dx, -dy) / (2 * Math.PI)) + 1) % 1, ai = Math.max(0, Math.min(A - 1, Math.floor(f * A + noise))), ri = Math.max(0, Math.min(R - 1, Math.round(r * (R - 1) + noise))), k = ri * A + ai, ow = d.owner[k];
       if (ow < 0) { px[o] = 14; px[o + 1] = 20; px[o + 2] = 28; px[o + 3] = 255; continue; }
       const s = d.strength[k], c1 = cols[ow], sc = d.second[k]; let cr = c1[0], cg = c1[1], cb = c1[2];
       if (sc >= 0) { const c2 = cols[sc]; cr = (cr + c2[0]) / 2; cg = (cg + c2[1]) / 2; cb = (cb + c2[2]) / 2; }
@@ -1034,7 +1039,7 @@
         const k2 = [ri * A + ((ai + 1) % A), ri * A + ((ai + A - 1) % A), Math.min(R - 1, ri + 1) * A + ai, Math.max(0, ri - 1) * A + ai]; if (k2.some((q) => d.owner[q] !== foc)) { px[o] = 235; px[o + 1] = 240; px[o + 2] = 245; }
       }
     }
-    dctx.putImageData(id, 0, 0);
+    dctx.putImageData(id, 0, 0); dishPainted = d; }
     cx.save(); cx.beginPath(); cx.arc(cxp, cyp, R0, 0, 6.2832); cx.clip(); cx.imageSmoothingEnabled = true; cx.drawImage(dishOff, cxp - R0, cyp - R0, R0 * 2, R0 * 2); cx.restore();
     cx.strokeStyle = '#2c3f55'; cx.lineWidth = 2; cx.beginPath(); cx.arc(cxp, cyp, R0, 0, 6.2832); cx.stroke();
     // the civilisation sector (land): its own radial meaning, centre = bound to the environment, outside = changing it

@@ -169,7 +169,9 @@
       for (const x of ind) for (let i = 0; i < lti.length; i++) m[i] += x.traits[lti[i]];
       return m.map((v) => v / n);
     };
-    const addEvent = (kind, text) => { const st = live.stats(); game.events.push({ t: st.t, gen: Math.round(gen() * 10) / 10, kind, text, ...(TB ? { y: wm.years } : {}) }); if (game.events.length > 400) game.events.shift(); if (v2 && IMPORTANT.has(kind)) snapshotRanges(kind); };
+    const MINOR = new Set(['evo', 'immigration', 'disaster', 'local', 'trait']);
+    let eventSeq = 0; // a counter that only grows: the log is trimmed from the front, so an index into it cannot be used to ask "what is new since?"
+    const addEvent = (kind, text) => { const st = live.stats(); game.events.push({ seq: ++eventSeq, t: st.t, gen: Math.round(gen() * 10) / 10, kind, text, ...(TB ? { y: wm.years } : {}) }); if (game.events.length > 400) { const mi = S4 ? game.events.findIndex((x) => MINOR.has(x.kind)) : -1; if (mi >= 0) game.events.splice(mi, 1); else game.events.shift(); } /* in the long game the noisy kinds go first, so that the history of the world stays */ if (v2 && IMPORTANT.has(kind)) snapshotRanges(kind); };
     // History of the (placeholder) adaptation ranges: one snapshot every 100 steps and one at each important event. The ranges
     // come from game.adaptationProvider, which today is the dummy in adaptation.js; the history is only as real as that provider.
     game.adaptationProvider = AD.provider;
@@ -254,7 +256,7 @@
       const r = BG.tick(bg, { dt: DETECT_EVERY, resourceMod: mod, arenaCount: st.realmAlive.map((m) => m.reduce((a, b) => a + b, 0)) });
       for (const im of r.immigrants) {
         const returning = last.lineageDead[im.lin] === true && st.lineageAlive[im.lin] === 0, made = live.introduce(im.lin, genomeOf(im.lin), im.n, im.realm);
-        if (made > 0) { const was = ever[im.lin]; ever[im.lin] = true; addEvent('immigration', `${returning ? '再侵入' : was ? '背景からの追加移入' : '背景からの移入'}：${creatures[im.lin].name}${tag(im.lin)} ${made}個体が${E.REALM_DEFS[im.realm].name}に到達（アリーナ外の背景集団から。進化していない祖先型）`); }
+        if (made > 0) { const was = ever[im.lin]; ever[im.lin] = true; if (!S4 || returning) addEvent('immigration', `${returning ? '再侵入' : was ? '背景からの追加移入' : '背景からの移入'}：${creatures[im.lin].name}${tag(im.lin)} ${made}個体が${E.REALM_DEFS[im.realm].name}に到達（アリーナ外の背景集団から。進化していない祖先型）`); }
       }
     }
 
@@ -415,22 +417,32 @@
       const growth = creatures.map((_, i) => windowGrowth(i)), det = live.lineageDetail(), rec = creatures.map((_, i) => Math.max(recordAge[i].age, det[i].maxAgeDead));
       const ev = WORLD.advance(wm, D, ctx); for (const e of ev) worldEvent(e);
       const rep = live.leap({ steps: D / YPS, growth, minKeep: 3, recordAge: rec });
-      if (S4) approxEvolve(D / YPS);
+      const post = () => { // everything that follows the leap (and, in the long game, follows the approximate evolution)
       for (const l of rep.extinct) tb.gapNote[l] = true;
       if (bg) { const k = Math.min(40, Math.max(1, Math.round(D / 5000))), arrived = creatures.map(() => 0); for (let j = 0; j < k; j++) { const r = bgRun(); for (const im of r) arrived[im.lin] += im.made; }
-        arrived.forEach((n, l) => { if (n > 0) addEvent('immigration', `${creatures[l].name}${tag(l)}：時間の跳躍の間に、アリーナ外の背景集団から合わせて${n}個体が到達（進化していない祖先型）`); }); }
+        arrived.forEach((n, l) => { if (n > 0 && !S4) addEvent('immigration', `${creatures[l].name}${tag(l)}：時間の跳躍の間に、アリーナ外の背景集団から合わせて${n}個体が到達（進化していない祖先型）`); }); }
       tb.leapYears += D; tb.leaps++; tb.skipGens += D / (genSteps * YPS); tb.lastLeapT = live.t; tb.wc = creatures.map(() => []);
       tb.leapLog.push({ t: st.t, years: D, atYears: wm.years, extinct: rep.extinct.slice(), extrapolated: growth.map((g, i) => (g < 0 && st.lineageAlive[i] > 0 ? i : -1)).filter((i) => i >= 0), kept: rep.kept.slice(), reseeded: rep.reseeded.slice(), removed: rep.removed.slice() }); if (tb.leapLog.length > 60) tb.leapLog.shift();
       if (wm.pendingDisaster) { live.disaster(wm.pendingDisaster); wm.pendingDisaster = 0; }
       updateScenario(); pushEffects(live.stats(), null); if (S3) offStep(D, live.stats()); raiseMilestones(); checkEndOfHistory();
+          };
+      if (S4 && startApprox(D / YPS, post)) return 'deferred';
+      post();
     }
     // Stage 4.0, APPROXIMATE evolution across a leap: the skipped generations are not computed, but a small number of real steps is run right after each leap with the supply
     // of mutations doubled, so that long stretches of history leave a mark on the lineages. This is a stand-in, labelled as such: it is NOT the evolution of the skipped
     // generations (which number in the millions) and the ledger counts it separately from the steps that were really simulated.
-    function approxEvolve(skippedSteps) {
-      const E_STEPS = Math.min(240, Math.round(skippedSteps / 20000)); if (E_STEPS < 1 || live.stats().population === 0) return;
-      const base = live.options.mutationRate; live.setOption('mutationRate', Math.min(1, base * 2)); live.step(E_STEPS); live.setOption('mutationRate', base);
-      tb.approxSteps = (tb.approxSteps || 0) + E_STEPS; tb.approxLeaps = (tb.approxLeaps || 0) + 1;
+    // The steps are run a few at a time, inside advance(), so that no single frame has to do them all (on a phone 240 steps in one go would freeze the screen). The order of
+    // everything is unchanged: nothing else is simulated until they are done, they stop at every logged action of a replay, and what followed the leap follows them.
+    let approx = null;
+    function startApprox(skippedSteps, post) {
+      const E_STEPS = Math.min(240, Math.round(skippedSteps / 20000)); if (E_STEPS < 1 || live.stats().population === 0) return false;
+      const base = live.options.mutationRate; live.setOption('mutationRate', Math.min(1, base * 2)); tb.approxLeaps = (tb.approxLeaps || 0) + 1; approx = { left: E_STEPS, base, post, tail: null }; return true;
+    }
+    function stepApprox(limit) {
+      const stop = nextStop(limit), n = Math.min(approx.left, Math.max(1, stop - live.t)); live.step(n); approx.left -= n; tb.approxSteps = (tb.approxSteps || 0) + n;
+      applyReplayEntries();
+      if (approx.left === 0) { const a = approx; approx = null; live.setOption('mutationRate', a.base); a.post(); (a.tail || afterTail)(); }
     }
     function checkEndOfHistory() { if (S3 && !tb.ended && wm.years >= wm.maxYears - 1) { tb.ended = true; addEvent('world', '観測できる期間の終わりに達しました（約40億年後）。ゲーム内時間はここまでです'); game.over = true; } }
     function bgRun() { // one coarse tick of the background pools during a leap (own random stream; immigrants may arrive in the arena)
@@ -584,10 +596,16 @@
     };
     function afterSegment() {
       expire();
-      if (live.t % DETECT_EVERY === 0) { updateScenario(); bgTick(); if (TB && live.t > 0) { worldWindow(); leapCheck(); } }
+      if (live.t % DETECT_EVERY === 0) { updateScenario(); bgTick(); if (TB && live.t > 0) { worldWindow(); if (leapCheck() === 'deferred') { approx.tail = afterTail; return; } } }
+      afterTail();
+    }
+    function afterTail() {
       if (live.t % DETECT_EVERY === 0 || live.done) detect();
       if (S31 && live.t % DETECT_EVERY === 0) evoNotes();
       if (live.t === nextCp && !game.checkpoint) { if (legacyReplay()) nextCp += cp.every; else game.checkpoint = { t: live.t, kind: 'interval' }; }
+      applyReplayEntries();
+    }
+    function applyReplayEntries() {
       if (replayLog) {
         while (replayPtr < replayLog.length && replayLog[replayPtr].t === live.t) {
           const e = replayLog[replayPtr++];
@@ -604,6 +622,7 @@
       let limit = live.t + n; if (game.replayTo !== null) limit = Math.min(limit, game.replayTo);
       let guard = 0;
       while (live.t < limit && !isOver() && !game.pending && !game.checkpoint && guard++ < 100000) {
+        if (approx) { stepApprox(limit); continue; }
         const target = nextStop(limit);
         live.step(target - live.t);
         afterSegment();
@@ -684,7 +703,7 @@
     const KIND_JA = { mutation: '突然変異', exchange: '機能交換', fusion: '融合（共生体の内部化）', separation: '分離（共生体の放出）' };
     const SUB_JA = { strengthen: '強まった', weaken: '弱まった', newcap: '新しい働きが現れた', alter: '働きが変質した', loss: '失われた', behaviour: '行動が変わった', symbiont: '', release: '', inter: '別の系統から', intra: '同じ系統内で' };
     const TRAIT_ALL_JA = { ...TRAIT_JA, replaceRatio: '細胞の入れ替え', falsePositive: '誤認（空振り）', falseNegative: '見落とし', memoryLearn: '学習', memoryUpkeep: '記憶の維持', switchThreshold: '行動の切り替え', rhythmPeriod: '活動の周期', rhythmPhase: '活動の位相', storage: '貯蔵' };
-    const evoSeen = new Map(), evoY = new Map(), lineageEnds = creatures.map(() => []);
+    let lastEvoLog = -1e9; const evoLogT = new Map(), evoSeen = new Map(), evoY = new Map(), lineageEnds = creatures.map(() => []);
     function evoText(e, phase) {
       const nm = creatures[e.lin].name, tr = e.trait ? TRAIT_ALL_JA[e.trait] || e.trait : null;
       if (e.kind === 'mutation') { const what = e.sub === 'strengthen' ? `${tr || '体質'}が強まった` : e.sub === 'weaken' ? `${tr || '体質'}が弱まった` : e.sub === 'newcap' ? `新しい働きが加わった${tr ? '（' + tr + 'に影響）' : ''}` : e.sub === 'loss' ? '働きが失われた' : '働きが変質した'; return `${nm}：突然変異で${what}${phase === 'established' ? '（定着）' : ''}`; }
@@ -696,11 +715,12 @@
     function evoNotes() {
       if (S4) recordsTick();
       if (live.t % 200 === 0) { const mm = lineageTraitMeans(); mm.forEach((m, i) => { if (m && m.count >= 3) { trails[i].push([live.t, lti.map((k) => m.mean[k])]); if (trails[i].length > 240) trails[i] = trails[i].filter((_, j) => j % 2 === 0); } }); }
-      const ev = live.evo(); if (!ev) return; let budget = 3;
+      const ev = live.evo(); if (!ev) return; let budget = S4 ? 1 : 3;
+      if (S4 && live.t % 400 === 0) { const ids = new Set(ev.events.map((e) => e.id)); for (const id of evoSeen.keys()) if (!ids.has(id)) { evoSeen.delete(id); evoY.delete(id); } } // events that fell out of the engine's list are forgotten here too
       for (const e of ev.events) {
         const prev = evoSeen.get(e.id);
-        if (prev === undefined) { evoSeen.set(e.id, e.status); evoY.set(e.id, wm ? wm.years : 0); if (budget > 0 && (e.kind !== 'mutation' || e.sub === 'newcap') && ever[e.lin]) { budget--; addEvent('evo', evoText(e, 'occurred')); } }
-        else if (prev !== e.status) { evoSeen.set(e.id, e.status); if (e.status === 'established' && ever[e.lin] && (e.kind !== 'mutation' || e.sub === 'newcap' || Math.abs(e.delta) >= 0.15)) addEvent('evo', evoText(e, 'established')); }
+        if (prev === undefined) { evoSeen.set(e.id, e.status); evoY.set(e.id, wm ? wm.years : 0); if (!S4 && budget > 0 && (e.kind !== 'mutation' || e.sub === 'newcap') && ever[e.lin]) { budget--; addEvent('evo', evoText(e, 'occurred')); } }
+        else if (prev !== e.status) { evoSeen.set(e.id, e.status); if (e.status === 'established' && ever[e.lin] && (e.kind !== 'mutation' || e.sub === 'newcap' || Math.abs(e.delta) >= 0.15)) { const tx = evoText(e, 'established'); if (S4) { if (budget > 0 && live.t - lastEvoLog >= 150 && !(evoLogT.has(tx) && live.t - evoLogT.get(tx) < 1200)) { budget--; lastEvoLog = live.t; evoLogT.set(tx, live.t); addEvent('evo', tx); } } else addEvent('evo', tx); } }
       }
     }
     game.evoReport = () => {
@@ -751,13 +771,13 @@
 
     // ======== Stage 4.0: the collection, heritage, feats and the Omega verdict. Everything is READ from the simulation; none of it is fed back into it, except the heritage
     // relics (which the engine lets survivors pick up by chance) and the player's stances. A discovery never grants an ability. ========
-    const codexMap = new Map(), featMap = new Map(); game.achievements = []; game.codexNew = []; game.featsNew = [];
+    const nameUse = new Map(), codexMap = new Map(), featMap = new Map(); game.achievements = []; game.codexNew = []; game.featsNew = [];
     const formSeen = new Map(), soloSteps = creatures.map(() => 0), extSteps = creatures.map(() => 0), prevAlive = creatures.map(() => 0), lastGenes = creatures.map(() => null), omegaHeld = creatures.map(() => 0);
     const heritageSeen = new Map(), aliveAtOnset = new Map(); game.omega = null; game.heritageNote = { exported: 0 };
     const yearsNow = () => (wm ? wm.years : 0);
     function achieve(kind, title, text, lin, special, ref) { game.achievements.unshift({ id: game.achievements.length + 1, kind, title, text, lin, t: live.t, y: yearsNow(), bp: WORLD.bp(wm), special: !!special, ref }); if (game.achievements.length > 80) game.achievements.pop(); }
     function discover(id, type, name, text, lin, rarity, tier) {
-      if (codexMap.has(id)) return null; const e = { id, type, name, text, t: live.t, y: yearsNow(), bp: WORLD.bp(wm), lin, lineage: creatures[lin].name, rarity, tier: tier || 0, rarityName: CDX.RARITY_NAME(rarity) }; codexMap.set(id, e); game.codexNew.push(e);
+      if (codexMap.has(id)) return null; if (type === 'form') { const k = (nameUse.get(name) || 0) + 1; nameUse.set(name, k); if (k > 1) name = name.replace(/型$|形$/, (m) => m) + ' ' + ['', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ', 'Ⅵ', 'Ⅶ', 'Ⅷ', 'Ⅸ', 'Ⅹ'][Math.min(9, k - 1)]; } /* same words, a different combination of the six axes: told apart by a number */ const e = { id, type, name, text, t: live.t, y: yearsNow(), bp: WORLD.bp(wm), lin, lineage: creatures[lin].name, rarity, tier: tier || 0, rarityName: CDX.RARITY_NAME(rarity) }; codexMap.set(id, e); game.codexNew.push(e);
       const special = rarity >= 0.8 || type === 'mechanism'; achieve('codex', name, `${creatures[lin].name}：${text}（${e.rarityName}）`, lin, special, id); if (special) addEvent('codex', `📖 図鑑に記録：${name}（${creatures[lin].name}）`); return e;
     }
     function feat(id, name, text, lin, tier) {
@@ -835,6 +855,9 @@
       const roots = creatures.map((c, i) => ({ lin: i, name: c.name, color: c.color, alive: st.lineageAlive[i], ends: lineageEnds[i].slice(), lostClades: lost[i] }));
       return { nodes, links, roots, focus: controlled, years: yearsNow(), scale: wm ? wm.presentYears + 1e9 : 1, tracked: tracked.length, shown: nodes.length, note: '記録されたイベントだけで描いています。古くて消えた枝は数だけを示します。' };
     };
+    Object.defineProperty(game, 'approxLeft', { get: () => (approx ? approx.left : 0) }); // steps of approximate evolution still to run (they are spread over later frames)
+    Object.defineProperty(game, 'eventSeq', { get: () => eventSeq });
+    game.eventsSince = (seq) => { const out = []; for (let i = game.events.length - 1; i >= 0 && game.events[i].seq > seq; i--) out.push(game.events[i]); return out.reverse(); };
     game.freeRoutes = () => { if (!S31) return null; const mv = live.stats().moves; if (!mv) return null; const ref = E.REALM_ADJ; let on = 0, off = 0; mv.forEach((row, a) => row.forEach((n, b) => { if (a === b) return; if (ref[a].includes(b)) on += n; else off += n; })); return { reference: on, outside: off }; };
     game.save = () => ({ v: S4 ? 9 : S31 ? 8 : S3 ? 7 : TB ? 6 : 5, cfg: game.cfg, t: live.t, log: game.log.map((e) => ({ ...e })), autoContinuous: game.autoContinuous });
     // Only values the engine actually computes: living counts, their change over about the last 100 steps, extinction time,
@@ -891,6 +914,13 @@
     return game;
   }
   function newGame(E, cfg) { return createGame(E, { seed: 1, ...cfg }); }
-  function loadGame(E, save) { return createGame(E, save.cfg, save); }
-  return { HIST, CREATURES, CREATURES7, CELLS8, ENVIRONMENTS, OPTIONS, KEY_TRAITS, TRAIT_JA, MAX_LINEAGES, STRATEGIES, pickRivals, makeGenome, newGame, loadGame, leapBlocker, DETECT_EVERY, LEAP_FROM };
+  function validateSave(save) { // a damaged save is refused with a reason instead of wedging the replay
+    const bad = (m) => { throw new Error('セーブが壊れています：' + m); };
+    if (!save || typeof save !== 'object') bad('形式'); if (!save.cfg || typeof save.cfg !== 'object' || !Array.isArray(save.cfg.creatures)) bad('設定'); if (!Array.isArray(save.log)) bad('操作の記録'); if (typeof save.t !== 'number' || !(save.t >= 0) || !isFinite(save.t)) bad('時刻'); if (typeof save.cfg.seed !== 'number') bad('乱数の種');
+    if (save.v !== undefined && (typeof save.v !== 'number' || save.v > 9)) bad('新しすぎる版');
+    let last = 0; for (const e of save.log) { if (!e || typeof e !== 'object' || typeof e.t !== 'number' || typeof e.kind !== 'string') bad('記録の項目'); if (e.t < last) bad('記録の順序'); last = e.t; }
+    return save;
+  }
+  function loadGame(E, save) { validateSave(save); return createGame(E, save.cfg, save); }
+  return { validateSave, HIST, CREATURES, CREATURES7, CELLS8, ENVIRONMENTS, OPTIONS, KEY_TRAITS, TRAIT_JA, MAX_LINEAGES, STRATEGIES, pickRivals, makeGenome, newGame, loadGame, leapBlocker, DETECT_EVERY, LEAP_FROM };
 });
