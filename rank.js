@@ -28,12 +28,12 @@
     { id: 'independence', name: '集団・技術に頼らない自力の生存', unit: '知性文明の敵対（捕獲・駆除・環境破壊）の下で、共存による支援に頼らずに存続した回数（ゲーム上の仮定。文明が現れない世界では未計算）', better: 'high', tiers: [1, 2, 4, 8] },
     { id: 'competition', name: '競争下での持続力', unit: '競争相手がいる状態で、系統が途切れず存続した期間（ステップ）', better: 'high', tiers: [4000, 15000, 50000, 150000] },
   ];
-  const CONTINUITY = { name: '連続生存期間', unit: '個体が途切れず生きた最長記録（ステップ）', tiers: [150, 300, 600, 1500, 4000] };
+  const CONTINUITY = { name: '連続生存期間', unit: '個体が途切れず生きた最長記録（ステップ）', tiers: [150, 250, 450, 1200, 4000] }; // Stage 5.0: measured individual records reach ~240 steps in 30000 steps, so 300 was out of reach; the top tier (and so the Omega condition) is unchanged
   // rank rules over C (continuity tier 0-5) and K[l] = number of ability axes at tier >= l
   const RANKS = [
     { id: 'α', name: 'α', C: 0, K: [] },
     { id: 'β', name: 'β', C: 1, K: [[1, 1]] },
-    { id: 'γ', name: 'γ', C: 1, K: [[1, 2]] },
+    { id: 'γ', name: 'γ', C: 1, K: [[1, 2], [2, 1]] },
     { id: 'δ', name: 'δ', C: 2, K: [[1, 3], [2, 1]] },
     { id: 'ε', name: 'ε', C: 2, K: [[2, 3]] },
     { id: 'ζ', name: 'ζ', C: 3, K: [[2, 4], [3, 1]] },

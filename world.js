@@ -73,7 +73,7 @@
     // the climate: keep the temperature drift per leap under 0.4 K
     const dT = w.h4 ? Math.abs((bp(w) > 1e6 ? H4.climate(bp(w) - 1e6) : solarAnomaly(bp(w) - 1e6, w.par, 0)) - (bp(w) > 0 ? H4.climate(bp(w)) : solarAnomaly(bp(w), w.par, 0))) / 1e6 : Math.abs(solarAnomaly(bp(w) - 1e6, w.par) - solarAnomaly(bp(w), w.par)) / 1e6; if (dT > 0) m = Math.min(m, 0.4 / dT);
     if (w.h4) { const he = w.hEv[w.hIdx]; if (he) m = Math.min(m, Math.max(1, he.t - w.years)); } // never jump over a dated event of the history
-    if (w.civ.civ) m = Math.min(m, w.long && w.civ.civ.T < 3 ? 40000 : 4000); // while a civilisation is alive, leaps stay short: it changes within thousands of years (a society that has not reached industry changes more slowly)
+    if (w.civ.civ) m = Math.min(m, Math.max(w.long && w.civ.civ.T < 3 ? 40000 : 4000, w.long ? Math.min(2e5, 0.02 * (w.years - w.civ.civ.born)) : 0)); // the cap grows with the civilisation's age (Stage 5.0): a society that has lasted millions of years no longer holds the world to 4000-year steps // while a civilisation is alive, leaps stay short: it changes within thousands of years (a society that has not reached industry changes more slowly)
     if (w.long) {
       // never jump over a warning, an onset or an aftermath report: the leap ends exactly at the next milestone
       const nm = w.ms[w.msIdx]; if (nm) m = Math.min(m, Math.max(1, nm.t - w.years));
