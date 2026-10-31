@@ -133,6 +133,8 @@
   const h4Conditions = (w) => (w.h4 ? H4.conditions(bp(w)) : null);
   const catEffects = (w) => (w.long ? CAT.effectsAt(w.cat, w.years) : null);
   function poisson(rng, lam) { if (lam <= 0) return 0; if (lam > 30) return Math.round(lam); const L = Math.exp(-lam); let k = 0, p = 1; do { k++; p *= rng(); } while (p > L && k < 80); return k - 1; }
-  function formatBP(w) { const y = bp(w); if (y >= 1e8) return `${(y / 1e8).toFixed(2)}億年前`; if (y >= 1e4) return `${(y / 1e4).toFixed(y >= 1e7 ? 0 : 1)}万年前`.replace(/^(\d+)\.0万/, '$1万'); if (y > 0) return `${Math.round(y)}年前`; return y > -1 ? '現代' : `いまから約${CIV.fmtYears(-y)}後`; }
-  return { DAYS_PER_STEP, YEARS_PER_STEP, START_YEARS_BP, MAX_YEARS, PAR, bufferAt, luminosity, solarAnomaly, create, ambient, safeLeap, advance, bp, formatBP, activeForecasts, catStatus, catEffects, h4Conditions, h4: H4, civ: CIV, cat: CAT };
+  // Stage 5.2: years written down to the 10,000-year digit (5億1234万年), so that a slowly moving clock visibly moves. Display only: nothing in the simulation reads this.
+  function jaYears(y) { y = Math.abs(y); if (y < 1e4) return `${Math.round(y)}年`; const man = Math.floor(y / 1e4), oku = Math.floor(man / 1e4), rem = man % 1e4; return oku > 0 ? (rem > 0 ? `${oku}億${rem}万年` : `${oku}億年`) : `${man}万年`; }
+  function formatBP(w) { const y = bp(w); if (y >= 1) return `${jaYears(y)}前`; return y > -1 ? '現代' : `いまから${jaYears(-y)}後`; }
+  return { DAYS_PER_STEP, YEARS_PER_STEP, START_YEARS_BP, MAX_YEARS, PAR, bufferAt, luminosity, solarAnomaly, create, ambient, safeLeap, advance, bp, formatBP, jaYears, activeForecasts, catStatus, catEffects, h4Conditions, h4: H4, civ: CIV, cat: CAT };
 });

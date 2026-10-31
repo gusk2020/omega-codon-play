@@ -495,7 +495,7 @@
     game.isAdaptive = TB;
     game.worldInfo = () => {
       if (!TB) return null; const c = wm.civ.civ, r = wm.civ.residue, a = WORLD.ambient(wm), st = live.stats(), simYears = st.t * YPS;
-      return { presentYears: wm.presentYears || null, years: wm.years, simulatedYears: simYears, leapYears: tb.leapYears, bp: WORLD.bp(wm), bpText: WORLD.formatBP(wm), leaps: tb.leaps, blocked: tb.blocked, blocker: tb.lastBlocker,
+      return { presentYears: wm.presentYears || null, years: wm.years, simulatedYears: simYears, leapYears: tb.leapYears, bp: WORLD.bp(wm), bpText: WORLD.formatBP(wm), elapsedText: WORLD.jaYears(wm.years), leaps: tb.leaps, blocked: tb.blocked, blocker: tb.lastBlocker,
         generations: clock.gen, skippedGenerations: tb.skipGens, daysPerStep: WORLD.DAYS_PER_STEP,
         climate: { warm: a.warm, solar: a.warmSolar, civil: a.warmCiv, luminosity: WORLD.luminosity(-WORLD.bp(wm)) },
         civ: c ? { id: c.id, N: c.N, T: c.T, stage: CIVM.stageName(c.T), S: c.S, phase: c.phase, war: c.war, collapses: c.collapses, born: c.born, ageYears: wm.years - c.born, reach: CIVM.reach(c.T) } : null,
@@ -965,5 +965,5 @@
     return save;
   }
   function loadGame(E, save) { validateSave(save); if (save.kind === 'milestone') return createGame(E, save.cfg, null, save); return createGame(E, save.cfg, save); }
-  return { validateSave, HIST, CREATURES, CREATURES7, CELLS8, ENVIRONMENTS, OPTIONS, KEY_TRAITS, TRAIT_JA, MAX_LINEAGES, STRATEGIES, pickRivals, makeGenome, newGame, loadGame, leapBlocker, DETECT_EVERY, LEAP_FROM };
+  return { validateSave, HIST, CREATURES, CREATURES7, CELLS8, ENVIRONMENTS, OPTIONS, KEY_TRAITS, TRAIT_JA, MAX_LINEAGES, STRATEGIES, pickRivals, makeGenome, newGame, loadGame, leapBlocker, DETECT_EVERY, LEAP_FROM, jaYears: WORLD.jaYears };
 });

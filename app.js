@@ -587,7 +587,7 @@
   function drawHud() {
     const wi = game.worldInfo(), st = game.live.stats(), ti = game.timeInfo(), rk = game.rank, cur = rk.current, best = rk.best;
     let era, sub;
-    if (wi) { era = wi.bpText; sub = `開始から ${fmtY(wi.years)}　世代 ${NUM(wi.generations)}（計算）`; }
+    if (wi) { era = wi.bpText; sub = `開始から ${wi.elapsedText}　世代 ${NUM(wi.generations)}（計算）`; }
     else { const hi = game.historyInfo(); era = hi ? HS.formatYearsBP(hi.yearsBP).replace('約', '') : '自由開始'; sub = `${TM.format(ti.steps, hi ? 'day' : assume)}経過（仮定・旧方式）　世代 ${NUM(ti.generations)}`; }
     $('hud-era').textContent = era; $('hud-sub').textContent = sub;
     const wrap = $('hud-rank'); wrap.innerHTML = `<span class="rk">${cur ? cur.rank : '？'}</span><small>最高 <b>${best ? best.rank : 'なし'}</b></small>`;
@@ -884,9 +884,12 @@
     const card = $('modal-card'), was = playing; playing = false; setPP(); card.className = 'card'; card.innerHTML = html;
     const b = document.createElement('button'); b.className = 'btn primary big'; b.textContent = '閉じる'; b.onclick = () => { $('modal').hidden = true; if (onClose) onClose(); if (was && !game.pending && !game.checkpoint && !game.isOver) { playing = true; setPP(); } }; card.appendChild(b); $('modal').hidden = false; return card;
   }
+  let hudPrevY = null, hudJump = 0, hudJumpUntil = 0;
   function drawHud31() {
     const wi = game.worldInfo(), rk = game.rank, cur = rk.current, best = rk.best;
-    $('hud-era').textContent = wi.bpText; $('hud-sub').textContent = `開始から ${F.years(wi.years)}`;
+    // Stage 5.2: the clock is written to the 10,000-year digit, and a big jump is announced for a few seconds (display only)
+    { const nowMs = performance.now(); if (hudPrevY === null || wi.years < hudPrevY) { hudPrevY = wi.years; hudJump = 0; } else if (wi.years - hudPrevY >= 1e6) { hudJump += wi.years - hudPrevY; hudJumpUntil = nowMs + 5000; } hudPrevY = wi.years; if (nowMs > hudJumpUntil) hudJump = 0;
+      $('hud-era').textContent = wi.bpText; $('hud-sub').textContent = `開始から ${wi.elapsedText}${hudJump > 0 ? `　⏩ +${G.jaYears(hudJump)}` : ''}`; }
     $('hud-rank').innerHTML = `<span class="rk">${cur ? cur.rank : '？'}</span><small>最高 <b>${best ? best.rank : 'なし'}</b></small>`;
     const th = game.threat(), lv = th ? ['安全', '注意', '危険', '非常に危険'][th.level] : null, col = th ? ['#46c28a', '#f2d13d', '#f2a03d', '#e5586e'][th.level] : null;
     const thr = th ? `<span class="hchip" style="border-color:${col};color:${col}">${S4() ? '●' : ['🟢', '🟡', '🟠', '🔴'][th.level]} ${lv}</span>` : '';
@@ -1074,7 +1077,7 @@
     h += '<div class="note">図鑑は実際の進化の記録です。記録しても能力は与えられず、次の世界の生き物も強くなりません。</div>';
     $('tab-codex').innerHTML = h; $('tab-codex').querySelectorAll('#codex-f .chip').forEach((b) => { b.onclick = () => { codexFilter = b.dataset.k; drawCodexTab(); }; });
   }
-  const bpText = (bp) => (bp >= 1e8 ? `${F.num(bp)}年前` : bp >= 1 ? `${F.years(bp)}前` : bp > -1 ? '現代' : `${F.years(-bp)}後`);
+  const bpText = (bp) => (bp >= 1 ? `${G.jaYears(bp)}前` : bp > -1 ? '現代' : `${G.jaYears(-bp)}後`); // Stage 5.2: to the 10,000-year digit
   // ---- 偉業 ----
   function drawFeatsTab() {
     const fs = game.feats().slice().reverse(), os = game.omegaStatus(), rk = game.rank, meta = Meta.load()[modeOf()] || Meta.blank();
