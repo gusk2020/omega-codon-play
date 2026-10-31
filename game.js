@@ -53,6 +53,9 @@
   ];
   const IMPORTANT = new Set(['branch', 'disaster', 'crisis', 'lineage', 'scenario', 'immigration', 'player', 'rank', 'civ', 'world']);
   const STRATEGIES = { none: { code: 0, name: '方針なし', icon: '・' }, flee: { code: 1, name: '逃避', icon: '↘' }, coexist: { code: 2, name: '共存', icon: '＝' }, defend: { code: 3, name: '防御', icon: '◇' }, attack: { code: 4, name: '攻撃', icon: '✕' } };
+  // Stage 5.1 timing, for games created from Stage 5.1 on (cfg.light): leaps come more often and are cheaper so that the clock moves smoothly on a phone. A log-based save from an earlier
+  // stage has no `light` in its cfg and keeps the old numbers (400-step windows, 240 approximate steps at mutation x2), so that its replay stays exact.
+  const LIGHT_TIMING = { minGap: 120, genFactor: 3, approxMax: 80, approxMut: 3 }, LEGACY_TIMING = { minGap: 400, genFactor: 8, approxMax: 240, approxMut: 2 };
   const LEAP_FROM = 6000; // steps: the first years after the impact are always simulated step by step
   // Pauses with a choice (continue / save / start over): the first at the old fixed end (100000 steps), then at regular intervals. There is no fixed end any more.
   const CHECKPOINT = { first: 100000, every: 50000 };
@@ -112,7 +115,7 @@
     return g;
   }
 
-  function createGame(E, cfg, saved) {
+  function createGame(E, cfg, saved, resume) {
     const S3 = (cfg.stage === 3 || cfg.stage === 3.1 || cfg.stage === 4) && cfg.ecology === 'v2' && cfg.time === 'adaptive', S31 = S3 && cfg.stage >= 3.1, S4 = S3 && cfg.stage === 4, ROSTER = S4 ? CELLS8 : S3 ? CREATURES7 : CREATURES; // Stage 3.0 world: seven founders, long history, depth habitat
     const focus = S4 ? ROSTER.slice() : cfg.creatures.map((id) => ROSTER.find((c) => c.id === id)).filter(Boolean); // Stage 4.0: every primordial lineage is watched; the lineage in focus is chosen (and changed) on the screen
     const rivalDefs = (cfg.rivals || []).map((id) => ROSTER.find((c) => c.id === id)).filter(Boolean);
@@ -129,17 +132,18 @@
     const genomeCache = [], genomeOf = (i) => genomeCache[i] || (genomeCache[i] = makeGenome(E, creatures[i]));
     const environment = cfg.environment || 'steady', envDef = ENVIRONMENTS.find((e) => e.id === environment);
     if (!envDef) throw new Error('unknown environment');
-    const counts = creatures.map(() => 0); if (v2) { const n = initialIdx.length, per = Math.floor(100 / n); initialIdx.forEach((li, k) => { counts[li] = per + (k < 100 - per * n ? 1 : 0); }); }
+    const counts = creatures.map(() => 0); if (v2 && !resume) { const n = initialIdx.length, per = Math.floor(100 / n); initialIdx.forEach((li, k) => { counts[li] = per + (k < 100 - per * n ? 1 : 0); }); }
+    const LIGHT = cfg.light === true, TIMING = LIGHT ? LIGHT_TIMING : LEGACY_TIMING;
     const TB = v2 && cfg.time === 'adaptive'; // Stage 2.0 time base (30 days per step, leaps, civilisation, abnormal cells)
     const live = E.simulate({ seed: cfg.seed, steps: 1e9, continueWhenEmpty: v2, ...(TB ? { civ: true, abnormal: true, deathRecordCap: 20000 } : {}), ...(S3 ? { depth: { ...NICHE.engineArrays(0), box: NICHE.makeBox(E), bins: NICHE.BINS } } : {}), ...(S31 ? { v31: S4 ? { codon: true, o2: true, spread: true } : {} } : {}), environment: envDef.engine, resourceRegime: envDef.regime, ...(envDef.scale ? { resourceScale: envDef.scale } : {}), founders: 100, lineageCount: creatures.length,
       founderGenomes: creatures.map((c, i) => genomeOf(i)), sampleEvery: 100, live: true,
       ...(v2 ? { founderCounts: counts, niche: { slots: NICHE_SLOTS, weights: creatures.map((c) => c.niche), specialistBonus: NICHE_BONUS } } : {}),
       realms: realmsOn ? { startByLineage: creatures.map((c) => c.startRealm) } : null });
-    const game = { cfg: { creatures: focus.map((c) => c.id), rivals: rivalDefs.map((c) => c.id), seed: cfg.seed, environment, realms: realmsOn, scenario, ecology: v2 ? 'v2' : 'legacy', ...(v2 && cfg.background === false ? { background: false } : {}), ...(TB ? { time: 'adaptive' } : {}), ...(S4 && cfg.heritage ? { heritage: cfg.heritage } : {}), ...(S3 ? { stage: S4 ? 4 : S31 ? 3.1 : 3, ...(cfg.testStartYears ? { testStartYears: cfg.testStartYears } : {}) } : {}), ...(cfg.checkpoint ? { checkpoint: cfg.checkpoint } : {}) }, creatures, v2, focusCount: focus.length, roleOf, autoContinuous: false, live, events: [], series: [], pending: null, effects: [], log: [], replayTo: null };
+    const game = { cfg: { ...(LIGHT ? { light: true } : {}), creatures: focus.map((c) => c.id), rivals: rivalDefs.map((c) => c.id), seed: cfg.seed, environment, realms: realmsOn, scenario, ecology: v2 ? 'v2' : 'legacy', ...(v2 && cfg.background === false ? { background: false } : {}), ...(TB ? { time: 'adaptive' } : {}), ...(S4 && cfg.heritage ? { heritage: cfg.heritage } : {}), ...(S3 ? { stage: S4 ? 4 : S31 ? 3.1 : 3, ...(cfg.testStartYears ? { testStartYears: cfg.testStartYears } : {}) } : {}), ...(cfg.checkpoint ? { checkpoint: cfg.checkpoint } : {}) }, creatures, v2, focusCount: focus.length, roleOf, autoContinuous: false, live, events: [], series: [], pending: null, effects: [], log: [], replayTo: null };
     const extinctAt = new Array(creatures.length).fill(null);
     const lti = KEY_TRAITS.map((n) => E.TRAITS.findIndex((l) => l[0] === n));
     const off = S3 ? OFF.create(cfg.seed) : null;
-    const wm = TB ? WORLD.create(cfg.seed, S4 ? { history4: true, startYears: cfg.testStartYears } : S3 ? { catastrophe: true, startYears: cfg.testStartYears } : {}) : null;
+    const wm = TB ? WORLD.create(cfg.seed, S4 ? { history4: true, light: LIGHT, startYears: cfg.testStartYears } : S3 ? { catastrophe: true, light: LIGHT, startYears: cfg.testStartYears } : {}) : null;
     let replayLog = saved ? saved.log.map((e) => ({ ...e })) : null, replayPtr = 0;
     if (saved) { game.replayTo = saved.t; }
     const restoreAuto = () => { if (saved && game.replayTo === null) game.autoContinuous = saved.autoContinuous === true; };
@@ -205,6 +209,7 @@
     // ---- Stage 1.9C observations (v2 only). Everything here is read from the engine's own counts; nothing steers the simulation. ----
     const evoIdx = EVO.map((e) => E.TRAITS.findIndex((l) => l[0] === e[0])), evoBase = creatures.map(() => null), evoFlag = creatures.map(() => ({}));
     const popBefore = creatures.map(() => []); // [t, count] history per lineage for the 'same period' sentences
+    let ltmT = -1, ltmV = null; const cachedMeans = () => { if (ltmT !== live.t) { ltmV = lineageTraitMeans(); ltmT = live.t; } return ltmV; }; // one pass per step, shared by the 8 lineages' rank metrics
     function lineageTraitMeans() {
       const sum = creatures.map(() => new Array(E.TRAITS.length).fill(0)), cnt = creatures.map(() => 0);
       for (const x of live.individuals()) { cnt[x.lin]++; for (let k = 0; k < x.traits.length; k++) sum[x.lin][k] += x.traits[k]; }
@@ -270,7 +275,7 @@
     const legacyReplay = () => !!saved && (saved.v || 1) < 5 && game.replayTo !== null; // saves from Stages 1.8-1.9C have no checkpoints in their logs
     const dsnaps = []; // lineage detail on a 100-step grid, for windowed measures
     const WINDOW = 5000;
-    const recordAge = creatures.map(() => ({ age: 0, id: null, t: 0 })), streak = creatures.map(() => 0), firstSeen = creatures.map(() => null);
+    const founderMean = creatures.map(() => null), recordAge = creatures.map(() => ({ age: 0, id: null, t: 0 })), streak = creatures.map(() => 0), firstSeen = creatures.map(() => null);
     game.rank = { lineages: [], current: null, best: null, history: [], byLin: {} };
     function metricsFor(i, st, det) {
       const now = det[i], ref = dsnaps.find((x) => x.t >= st.t - WINDOW) || dsnaps[0];
@@ -280,7 +285,8 @@
       const young = youngAt ? sum(hDe, 1, 2) / youngAt : null, old = oldAt ? sum(hDe, 3, 40) / oldAt : null;
       const dIn = now.dmgIn - (base ? base.dmgIn : 0), dOut = now.dmgOut - (base ? base.dmgOut : 0), spent = now.spent - (base ? base.spent : 0), indSteps = sum(hAt, 0, 40);
       const intake = st.lineageStats[i].intake - (bs ? bs.intake : 0), wake = now.dormWake - (base ? base.dormWake : 0), dd = now.dormDeaths - (base ? base.dormDeaths : 0);
-      return { alive: now.alive, observedSteps: firstSeen[i] === null ? 0 : st.t - firstSeen[i], continuity: Math.max(recordAge[i].age, now.maxAgeDead),
+      const fm = founderMean[i], cm = fm ? cachedMeans()[i] : null, drift = fm && cm ? lti.reduce((a, k, j) => a + Math.abs(cm.mean[k] - fm[j]) / (E.TRAITS[k][2] - E.TRAITS[k][1]), 0) / lti.length : null; // evolved change from the lineage's own starting traits
+      return { alive: now.alive, legacy: !LIGHT, drift, observedSteps: firstSeen[i] === null ? 0 : st.t - firstSeen[i], continuity: Math.max(recordAge[i].age, now.maxAgeDead),
         aging: { value: young && old !== null && young > 0 ? old / young : null, young: youngAt, old: oldAt, youngRate: young, oldRate: old },
         repair: { value: dIn > 0 ? dOut / dIn : null }, efficiency: { value: indSteps > 0 ? spent / indSteps : null, intakeRatio: spent > 0 ? intake / spent : 0 },
         range: { value: st.realmAlive ? st.realmAlive.filter((r) => r[i] >= 5).length : 1 }, ...(TB ? { independence: { value: tb.episodes[i] } } : {}), dormancy: { value: wake + dd > 0 ? wake / (wake + dd) : null, episodes: wake + dd }, competition: { value: streak[i] }, windowSteps: ref ? st.t - ref.t : 0 };
@@ -289,7 +295,7 @@
       const det = live.lineageDetail(), ind = live.individuals(), dt = DETECT_EVERY;
       for (const x of ind) if (x.age > recordAge[x.lin].age) recordAge[x.lin] = { age: x.age, id: x.id, t: st.t };
       for (let i = 0; i < creatures.length; i++) {
-        if (st.lineageAlive[i] > 0 && firstSeen[i] === null) firstSeen[i] = st.t;
+        if (st.lineageAlive[i] > 0 && firstSeen[i] === null) { firstSeen[i] = st.t; const lm = lineageTraitMeans()[i]; if (lm) founderMean[i] = lti.map((k) => lm.mean[k]); }
         const comp = st.lineageAlive.some((n, k) => k !== i && n >= 20);
         if (st.lineageAlive[i] < 5) streak[i] = 0; else if (comp) streak[i] += dt;
       }
@@ -408,7 +414,7 @@
     function lifeMean(i, st) { const s = st.lineageStats[i]; return s.deaths ? s.lifeSum / s.deaths : 25; }
     function leapCheck() {
       if (!TB || live.t < LEAP_FROM || game.pending || game.checkpoint || isOver()) return;
-      const st = live.stats(), genSteps = clock.winGenTime || 25, Wreq = st.population === 0 ? DETECT_EVERY : Math.max(400, Math.min(4000, Math.round(8 * genSteps))); // with nobody in the arena there is nothing to simulate between leaps
+      const st = live.stats(), genSteps = clock.winGenTime || 25, Wreq = st.population === 0 ? DETECT_EVERY : Math.max(TIMING.minGap, Math.min(4000, Math.round(TIMING.genFactor * genSteps))); // with nobody in the arena there is nothing to simulate between leaps
       if (live.t - tb.lastLeapT < Wreq) return;
       const blocker = leapBlocker(live.individuals(), (l) => lifeMean(l, st)); // an exceptionally long-lived individual is never skipped over: while one is alive, time runs step by step
       if (blocker) { tb.blocked++; tb.lastBlocker = { lin: blocker.lin, age: blocker.age, t: st.t }; return; }
@@ -436,8 +442,8 @@
     // everything is unchanged: nothing else is simulated until they are done, they stop at every logged action of a replay, and what followed the leap follows them.
     let approx = null;
     function startApprox(skippedSteps, post) {
-      const E_STEPS = Math.min(240, Math.round(skippedSteps / 20000)); if (E_STEPS < 1 || live.stats().population === 0) return false;
-      const base = live.options.mutationRate; live.setOption('mutationRate', Math.min(1, base * 2)); tb.approxLeaps = (tb.approxLeaps || 0) + 1; approx = { left: E_STEPS, base, post, tail: null }; return true;
+      const E_STEPS = Math.min(TIMING.approxMax, Math.round(skippedSteps / 20000)); if (E_STEPS < 1 || live.stats().population === 0) return false;
+      const base = live.options.mutationRate; live.setOption('mutationRate', Math.min(1, base * TIMING.approxMut)); tb.approxLeaps = (tb.approxLeaps || 0) + 1; approx = { left: E_STEPS, base, post, tail: null }; return true;
     }
     function stepApprox(limit) {
       const stop = nextStop(limit), n = Math.min(approx.left, Math.max(1, stop - live.t)); live.step(n); approx.left -= n; tb.approxSteps = (tb.approxSteps || 0) + n;
@@ -911,16 +917,53 @@
       r.push(`介入${game.log.filter((e) => e.kind !== 'watch' && !(e.kind === 'choice' && (e.id === 'watch' || e.id === 'auto'))).length}回（自動${game.log.filter((e) => e.id === 'auto').length}回）。`);
       return { text: r.join('\n') };
     };
+
+    // ---- Stage 5.1: milestone saves. A save is a state, not a history: it is taken only at a "continue?" screen, and loading it never replays anything. ----
+    // What is kept is what the player sees and what later play depends on: the world (clock, climate, crises, civilisation), every lineage's records
+    // (rank, codex, feats, achievements), and the living arena as a few representative genome groups per lineage and realm. What is NOT kept: the exact
+    // position, age, energy and health of each individual (they are re-created from their genome at full energy), the random streams, and the per-step history
+    // between milestones. So the game continues from the same world and the same evolved lineages, not bit-for-bit from the same instant.
+    const plain = (x) => JSON.parse(JSON.stringify(x));
+    const mergeInto = (target, src) => { for (const k of Object.keys(src)) { const v = src[k]; if (v && typeof v === 'object' && !Array.isArray(v) && target[k] && typeof target[k] === 'object' && !Array.isArray(target[k])) mergeInto(target[k], v); else target[k] = v; } };
+    game.milestone = () => {
+      if (!S4 || !TB || approx) return null;
+      const tbKeep = {}; for (const k of ['lastLeapT', 'leapYears', 'skipGens', 'leaps', 'takenTotal', 'harmTotal', 'episodes', 'gapNote', 'attackTotal', 'attackFrac', 'blocked', 'approxSteps', 'approxLeaps', 'lastStance', 'ended']) tbKeep[k] = tb[k];
+      return plain({ v: 10, kind: 'milestone', cfg: game.cfg, t: live.t, autoContinuous: game.autoContinuous, wm, off, bg, tb: tbKeep, ever, extinctAt, recordAge, streak, firstSeen, strategies, controlled,
+        peakLin, peakRealm, everRealm, founderMean, clock, eventSeq, events: game.events.slice(-120), achievements: game.achievements, codex: [...codexMap], feats: [...featMap], nameUse: [...nameUse], formSeen: [...formSeen],
+        soloSteps, extSteps, omegaHeld, omega: game.omega, rank: { best: game.rank.best, history: game.rank.history, byLin: game.rank.byLin, current: game.rank.current },
+        arena: live.exportArena(6) });
+    };
+    if (resume) {
+      live.step(resume.t); // an empty arena: only the environment runs, which is quick
+      mergeInto(wm, resume.wm); for (const [k, ex] of [['off', off], ['bg', bg]]) if (ex && resume[k]) mergeInto(ex, resume[k]);
+      mergeInto(tb, resume.tb); tb.wc = creatures.map(() => []);
+      resume.ever.forEach((v, i) => { ever[i] = v; }); resume.extinctAt.forEach((v, i) => { extinctAt[i] = v; }); resume.recordAge.forEach((v, i) => { recordAge[i] = v; }); resume.streak.forEach((v, i) => { streak[i] = v; }); resume.firstSeen.forEach((v, i) => { firstSeen[i] = v; });
+      resume.peakLin.forEach((v, i) => { peakLin[i] = v; }); resume.peakRealm.forEach((v, i) => { peakRealm[i] = v; }); resume.everRealm.forEach((v, i) => { everRealm[i] = v; }); (resume.founderMean || []).forEach((v, i) => { founderMean[i] = v; });
+      resume.strategies.forEach((v, i) => { strategies[i] = v; if (STRATEGIES[v]) live.setStance(i, STRATEGIES[v].code); }); controlled = resume.controlled;
+      Object.assign(clock, resume.clock); eventSeq = resume.eventSeq; for (const e of resume.events) game.events.push(e);
+      game.achievements = resume.achievements; for (const [k, v] of resume.codex) codexMap.set(k, v); for (const [k, v] of resume.feats) featMap.set(k, v); for (const [k, v] of resume.nameUse) nameUse.set(k, v); for (const [k, v] of resume.formSeen) formSeen.set(k, v);
+      resume.soloSteps.forEach((v, i) => { soloSteps[i] = v; }); resume.extSteps.forEach((v, i) => { extSteps[i] = v; }); resume.omegaHeld.forEach((v, i) => { omegaHeld[i] = v; }); game.omega = resume.omega;
+      Object.assign(game.rank, resume.rank, { lineages: [] }); game.autoContinuous = resume.autoContinuous === true;
+      for (const a of resume.arena) { const made = live.introduce(a.lin, a.genome, a.n, a.patch); if (made > 0) prevAlive[a.lin] += made; }
+      creatures.forEach((_, i) => { last.lineageDead[i] = ever[i] && extinctAt[i] !== null && prevAlive[i] === 0; });
+      nextCp = live.t + cp.every; tb.lastLeapT = live.t; game.resumed = { t: resume.t, arena: resume.arena.length };
+      try { updateScenario(); pushEffects(live.stats(), null); } catch (e) { /* the next step re-applies the pressures */ }
+    }
     return game;
   }
-  function newGame(E, cfg) { return createGame(E, { seed: 1, ...cfg }); }
+  function newGame(E, cfg) { return createGame(E, { seed: 1, light: true, ...cfg }); }
   function validateSave(save) { // a damaged save is refused with a reason instead of wedging the replay
     const bad = (m) => { throw new Error('セーブが壊れています：' + m); };
-    if (!save || typeof save !== 'object') bad('形式'); if (!save.cfg || typeof save.cfg !== 'object' || !Array.isArray(save.cfg.creatures)) bad('設定'); if (!Array.isArray(save.log)) bad('操作の記録'); if (typeof save.t !== 'number' || !(save.t >= 0) || !isFinite(save.t)) bad('時刻'); if (typeof save.cfg.seed !== 'number') bad('乱数の種');
+    if (!save || typeof save !== 'object') bad('形式');
+    if (save.kind === 'milestone') { // Stage 5.1: a state save, no log
+      if (save.v !== 10) bad('版'); if (!save.cfg || typeof save.cfg !== 'object' || typeof save.cfg.seed !== 'number') bad('設定'); if (typeof save.t !== 'number' || !(save.t >= 0) || !isFinite(save.t)) bad('時刻');
+      for (const k of ['wm', 'tb', 'clock', 'rank']) if (!save[k] || typeof save[k] !== 'object') bad(k); for (const k of ['arena', 'ever', 'extinctAt', 'recordAge', 'streak', 'firstSeen', 'strategies', 'events', 'achievements', 'codex', 'feats', 'nameUse', 'formSeen', 'soloSteps', 'extSteps', 'omegaHeld', 'peakLin', 'peakRealm', 'everRealm']) if (!Array.isArray(save[k])) bad(k);
+      if (!save.arena.every((a) => a && Number.isInteger(a.lin) && Number.isInteger(a.patch) && a.genome && typeof a.genome === 'object' && a.n >= 1)) bad('個体群'); return save;
+    } if (!save.cfg || typeof save.cfg !== 'object' || !Array.isArray(save.cfg.creatures)) bad('設定'); if (!Array.isArray(save.log)) bad('操作の記録'); if (typeof save.t !== 'number' || !(save.t >= 0) || !isFinite(save.t)) bad('時刻'); if (typeof save.cfg.seed !== 'number') bad('乱数の種');
     if (save.v !== undefined && (typeof save.v !== 'number' || save.v > 9)) bad('新しすぎる版');
     let last = 0; for (const e of save.log) { if (!e || typeof e !== 'object' || typeof e.t !== 'number' || typeof e.kind !== 'string') bad('記録の項目'); if (e.t < last) bad('記録の順序'); last = e.t; }
     return save;
   }
-  function loadGame(E, save) { validateSave(save); return createGame(E, save.cfg, save); }
+  function loadGame(E, save) { validateSave(save); if (save.kind === 'milestone') return createGame(E, save.cfg, null, save); return createGame(E, save.cfg, save); }
   return { validateSave, HIST, CREATURES, CREATURES7, CELLS8, ENVIRONMENTS, OPTIONS, KEY_TRAITS, TRAIT_JA, MAX_LINEAGES, STRATEGIES, pickRivals, makeGenome, newGame, loadGame, leapBlocker, DETECT_EVERY, LEAP_FROM };
 });

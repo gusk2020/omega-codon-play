@@ -135,7 +135,7 @@
   // Returns the longest step (in years) over which the civilisation side changes by a bounded amount and the expected number of random events is small.
   function maxStep(w, ctx) {
     const par = w.par, c = w.civ;
-    if (!c) { const lam = emergenceRate(w, ctx); const byEmerge = lam > 0 ? 0.3 / lam : Infinity; const resid = w.residue.pollution > 0.05 || w.residue.conv.some((v) => v > 0.03) ? Math.max(20000, Math.min(2e6, 0.3 * (w.years - (w.history.length ? w.history[w.history.length - 1].ended : w.years)))) : Infinity; return Math.min(byEmerge, resid); }
+    if (!c) { const lam = emergenceRate(w, ctx); const byEmerge = lam > 0 ? 0.3 / lam : Infinity; const resid = w.residue.pollution > 0.05 || w.residue.conv.some((v) => v > 0.03) ? (w.light ? Math.max(20000, Math.min(2e6, 0.3 * (w.years - (w.history.length ? w.history[w.history.length - 1].ended : w.years)))) : 20000) : Infinity; return Math.min(byEmerge, resid); }
     const y = stateVec(w), d = deriv(y, { prod: ctx.prod, war: c.war }, par, w.residue.legacy); let m = Infinity;
     for (let i = 0; i < 4; i++) { const sc = SCALE[i] * 3; if (Math.abs(d[i]) > 1e-12) m = Math.min(m, sc / Math.abs(d[i])); }
     const shock = par.shockRate * (0.5 + c.T / 6); if (shock > 0) m = Math.min(m, (par.lowTechSlack && c.T < 3 ? 6 : 1) * 0.25 / shock); // a society short of industry may be stepped over several small shocks at once (Stage 3.0 worlds)

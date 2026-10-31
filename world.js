@@ -38,7 +38,7 @@
   function create(seed, cfg = {}) {
     const rng = (() => { let a = ((seed * 2654435761) ^ 0x7F4A7C15) >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })();
     const w = { years: 0, rng, par: { ...PAR, ...(cfg.par || {}) }, civ: CIV.create(seed, { noise: cfg.noise !== false, par: cfg.catastrophe === true ? { stockStressByTech: true, lowTechSlack: true, ...(cfg.civPar || {}) } : cfg.civPar }), events: [], impacts: 0, volcs: 0, lastShockYears: 0, biosphereResetYears: 0, pendingDisaster: 0 };
-    w.civ.lastEndOrStart = 0;
+    w.civ.lastEndOrStart = 0; w.light = cfg.light === true; w.civ.light = w.light; // Stage 5.1: longer leaps while a civilisation or its residue lasts (games created from 5.1 only)
     if (cfg.catastrophe === true) {
       w.long = true; w.cat = CAT.schedule(seed); w.ms = CAT.milestones(w.cat); w.msIdx = 0; w.pendingMs = []; w.maxYears = MAX_YEARS;
       // `startYears` is a TEST-ONLY shortcut (not reachable from the game screens): begin the world later in its history so that a test can reach an era quickly.
@@ -73,7 +73,7 @@
     // the climate: keep the temperature drift per leap under 0.4 K
     const dT = w.h4 ? Math.abs((bp(w) > 1e6 ? H4.climate(bp(w) - 1e6) : solarAnomaly(bp(w) - 1e6, w.par, 0)) - (bp(w) > 0 ? H4.climate(bp(w)) : solarAnomaly(bp(w), w.par, 0))) / 1e6 : Math.abs(solarAnomaly(bp(w) - 1e6, w.par) - solarAnomaly(bp(w), w.par)) / 1e6; if (dT > 0) m = Math.min(m, 0.4 / dT);
     if (w.h4) { const he = w.hEv[w.hIdx]; if (he) m = Math.min(m, Math.max(1, he.t - w.years)); } // never jump over a dated event of the history
-    if (w.civ.civ) m = Math.min(m, Math.max(w.long && w.civ.civ.T < 3 ? 40000 : 4000, w.long ? Math.min(2e5, 0.02 * (w.years - w.civ.civ.born)) : 0)); // the cap grows with the civilisation's age (Stage 5.0): a society that has lasted millions of years no longer holds the world to 4000-year steps // while a civilisation is alive, leaps stay short: it changes within thousands of years (a society that has not reached industry changes more slowly)
+    if (w.civ.civ) m = Math.min(m, Math.max(w.long && w.civ.civ.T < 3 ? 40000 : 4000, w.long && w.light ? Math.min(2e5, 0.02 * (w.years - w.civ.civ.born)) : 0)); // the cap grows with the civilisation's age (Stage 5.0): a society that has lasted millions of years no longer holds the world to 4000-year steps // while a civilisation is alive, leaps stay short: it changes within thousands of years (a society that has not reached industry changes more slowly)
     if (w.long) {
       // never jump over a warning, an onset or an aftermath report: the leap ends exactly at the next milestone
       const nm = w.ms[w.msIdx]; if (nm) m = Math.min(m, Math.max(1, nm.t - w.years));

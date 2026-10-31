@@ -28,21 +28,31 @@
     { id: 'independence', name: '集団・技術に頼らない自力の生存', unit: '知性文明の敵対（捕獲・駆除・環境破壊）の下で、共存による支援に頼らずに存続した回数（ゲーム上の仮定。文明が現れない世界では未計算）', better: 'high', tiers: [1, 2, 4, 8] },
     { id: 'competition', name: '競争下での持続力', unit: '競争相手がいる状態で、系統が途切れず存続した期間（ステップ）', better: 'high', tiers: [4000, 15000, 50000, 150000] },
   ];
-  const CONTINUITY = { name: '連続生存期間', unit: '個体が途切れず生きた最長記録（ステップ）', tiers: [150, 250, 450, 1200, 4000] }; // Stage 5.0: measured individual records reach ~240 steps in 30000 steps, so 300 was out of reach; the top tier (and so the Omega condition) is unchanged
+  const CONTINUITY = { name: '連続生存期間', unit: '個体が途切れず生きた最長記録（ステップ）', tiers: [150, 200, 260, 400, 4000] }; // Stage 5.0: measured individual records reach ~240 steps in 30000 steps, so 300 was out of reach; the top tier (and so the Omega condition) is unchanged
   // rank rules over C (continuity tier 0-5) and K[l] = number of ability axes at tier >= l
+  // D: how far the lineage's key traits must have moved from where it began (mean change as a fraction of each trait's range, `drift`). Stage 5.1: promotion is tied to
+  // evolved change, not to the clock - a founder that already meets an ability bar at step 500 stays alpha until it has actually changed. Measured over 4 seeds, drift reaches
+  // 0.10-0.25 within 10000-100000 steps and then plateaus, so the bars sit inside that band.
   const RANKS = [
-    { id: 'α', name: 'α', C: 0, K: [] },
-    { id: 'β', name: 'β', C: 1, K: [[1, 1]] },
-    { id: 'γ', name: 'γ', C: 1, K: [[1, 2], [2, 1]] },
-    { id: 'δ', name: 'δ', C: 2, K: [[1, 3], [2, 1]] },
-    { id: 'ε', name: 'ε', C: 2, K: [[2, 3]] },
-    { id: 'ζ', name: 'ζ', C: 3, K: [[2, 4], [3, 1]] },
-    { id: 'η', name: 'η', C: 4, K: [[3, 3]] },
-    { id: 'θ', name: 'θ', C: 5, K: [[3, 4], [4, 2]] },
+    { id: 'α', name: 'α', C: 0, K: [], D: 0, O: 0 },
+    { id: 'β', name: 'β', C: 1, K: [[1, 1]], D: 0.03, O: 1500 },
+    { id: 'γ', name: 'γ', C: 1, K: [[1, 2], [2, 1]], D: 0.08, O: 6000 },
+    { id: 'δ', name: 'δ', C: 2, K: [[1, 3], [2, 1]], D: 0.12, O: 15000 },
+    { id: 'ε', name: 'ε', C: 2, K: [[2, 3]], D: 0.15, O: 30000 },
+    { id: 'ζ', name: 'ζ', C: 3, K: [[2, 4], [3, 1]], D: 0.18, O: 60000 },
+    { id: 'η', name: 'η', C: 4, K: [[3, 3]], D: 0.22, O: 100000 },
+    { id: 'θ', name: 'θ', C: 5, K: [[3, 4], [4, 2]], D: 0.28, O: 150000 },
   ];
+  // Rules of the stages before 5.1, kept so that a log-based save made earlier replays exactly (the game passes `legacy: true` in the metrics of those games).
+  const LEGACY_TIERS = [150, 300, 600, 1500, 4000];
+  const LEGACY_RANKS = [
+    { id: 'α', name: 'α', C: 0, K: [] }, { id: 'β', name: 'β', C: 1, K: [[1, 1]] }, { id: 'γ', name: 'γ', C: 1, K: [[1, 2]] }, { id: 'δ', name: 'δ', C: 2, K: [[1, 3], [2, 1]] },
+    { id: 'ε', name: 'ε', C: 2, K: [[2, 3]] }, { id: 'ζ', name: 'ζ', C: 3, K: [[2, 4], [3, 1]] }, { id: 'η', name: 'η', C: 4, K: [[3, 3]] }, { id: 'θ', name: 'θ', C: 5, K: [[3, 4], [4, 2]] },
+  ];
+  const CURRENT_RULES = { RANKS, tiers: CONTINUITY.tiers, legacy: false }, LEGACY_RULES = { RANKS: LEGACY_RANKS, tiers: LEGACY_TIERS, legacy: true };
   const OMEGA = { id: 'Ω', judgeable: false, text: 'Ωの正式な判定は、まだ実装できていません。必要な能力（宇宙・放射線への耐性、体の更新の限界、時間尺度の校正、集団や技術に依存しないことの検証など）の一部が未実装のため、Ω達成を表示することはありません。いま判定できる最高はθ（暫定）です。' };
   const tierOf = (value, ax) => { if (value === null || value === undefined || Number.isNaN(value)) return null; let t = 0; for (const th of ax.tiers) { if (ax.better === 'low' ? value <= th : value >= th) t++; else break; } return ax.capTier !== undefined ? Math.min(t, ax.capTier) : t; };
-  const contTier = (v) => { let t = 0; for (const th of CONTINUITY.tiers) { if (v >= th) t++; else break; } return t; };
+  const contTier = (v, tiers = CONTINUITY.tiers) => { let t = 0; for (const th of tiers) { if (v >= th) t++; else break; } return t; };
   // m: { continuity, aging:{value,young,old}, repair:{value}, efficiency:{value,intakeRatio}, range:{value}, dormancy:{value,episodes}, competition:{value}, observedSteps, alive }
   function evaluate(m) {
     if (!m || m.alive < 5 || m.observedSteps < 300) return { judged: false, reason: m && m.alive < 5 ? '個体が5体未満のため判定できません' : '観察が300ステップに満たないため判定中です', rank: null, axes: [], C: 0, K: [0, 0, 0, 0, 0] };
@@ -56,17 +66,20 @@
       const next = tier === null ? null : ax.tiers[tier] !== undefined && ax.tiers[tier] !== Infinity && (ax.capTier === undefined || tier < ax.capTier) ? ax.tiers[tier] : null;
       return { id: ax.id, name: ax.name, unit: ax.unit, value, tier, next, why, better: ax.better };
     });
-    const C = contTier(m.continuity || 0), K = [0, 1, 2, 3, 4].map((l) => axes.filter((a) => a.tier !== null && a.tier >= l).length);
-    let best = RANKS[0], idx = 0;
-    RANKS.forEach((r, i) => { if (C >= r.C && r.K.every(([l, n]) => K[l] >= n)) { best = r; idx = i; } });
-    const nextRank = RANKS[idx + 1] || null, missing = [];
+    const U = m.legacy ? LEGACY_RULES : CURRENT_RULES, C = contTier(m.continuity || 0, U.tiers), K = [0, 1, 2, 3, 4].map((l) => axes.filter((a) => a.tier !== null && a.tier >= l).length);
+    let best = U.RANKS[0], idx = 0;
+    const drift = !U.legacy && typeof m.drift === 'number' ? m.drift : null, obs = !U.legacy && typeof m.observedSteps === 'number' ? m.observedSteps : null; // O: steps the lineage has been observed (selection needs time to act; never the only condition) // null (an older caller) = not judged on drift
+    U.RANKS.forEach((r, i) => { if (C >= r.C && r.K.every(([l, n]) => K[l] >= n) && (drift === null || drift >= r.D) && (obs === null || obs >= r.O)) { best = r; idx = i; } });
+    const nextRank = U.RANKS[idx + 1] || null, missing = [];
     if (nextRank) {
-      if (C < nextRank.C) missing.push(`連続生存期間が段階${nextRank.C}（${CONTINUITY.tiers[nextRank.C - 1]}ステップ以上）に届いていない（最長記録 ${m.continuity}）`);
+      if (C < nextRank.C) missing.push(`連続生存期間が段階${nextRank.C}（${U.tiers[nextRank.C - 1]}ステップ以上）に届いていない（最長記録 ${m.continuity}）`);
+      if (obs !== null && obs < nextRank.O) missing.push(`観察期間が足りない（いま${obs}／${nextRank.O}ステップ）`);
+      if (drift !== null && drift < nextRank.D) missing.push(`体の変化（創始時からの形質の動き）が足りない（いま${(drift * 100).toFixed(0)}%／${Math.round(nextRank.D * 100)}%）`);
       for (const [l, n] of nextRank.K) if (K[l] < n) missing.push(`能力の軸のうち、段階${l}以上のものがあと${n - K[l]}つ必要（いま${K[l]}／${n}）`);
     }
     const strong = axes.filter((a) => a.tier !== null && a.tier >= 1).map((a) => `${a.name}（段階${a.tier}）`);
     const reason = best.id === 'α' ? 'まだ、判定できる能力が基準に届いていません。' : `連続生存期間が段階${C}（最長記録 ${m.continuity}ステップ）で、段階1以上の能力軸が${K[1]}つ：${strong.join('、') || 'なし'}。`;
-    return { judged: true, rank: best.id, rankIndex: idx, C, K, axes, reason, nextRank: nextRank ? nextRank.id : null, missing, omega: OMEGA, provisional: true };
+    return { judged: true, rank: best.id, rankIndex: idx, C, K, axes, reason, nextRank: nextRank ? nextRank.id : null, missing, omega: OMEGA, provisional: true, rules: U };
   }
   // ---- Stage 3.0: what stands between this rank and the next, as numbers ----
   // For each requirement: what the lineage has, what is needed, the shortfall, and (for the ability axes) which axes are the nearest to the needed tier. Nothing here
@@ -84,10 +97,10 @@
   const AXIS_TARGET = (ax, l) => (ax.tiers[l - 1] === undefined || ax.tiers[l - 1] === Infinity ? null : ax.tiers[l - 1]);
   function progress(res, m) {
     if (!res || !res.judged) return { judged: false, reason: res ? res.reason : '判定中' };
-    const cur = RANKS[res.rankIndex], next = RANKS[res.rankIndex + 1]; if (!next) return { judged: true, from: cur.id, to: null, requirements: [], done: 1, note: '判定できる範囲の最高に達しています。Ωの判定は未実装です。' };
+    const cur = (res.rules || CURRENT_RULES).RANKS[res.rankIndex], next = (res.rules || CURRENT_RULES).RANKS[res.rankIndex + 1]; if (!next) return { judged: true, from: cur.id, to: null, requirements: [], done: 1, note: '判定できる範囲の最高に達しています。Ωの判定は未実装です。' };
     const reqs = [];
-    if (res.C < next.C) { const need = CONTINUITY.tiers[next.C - 1], have = m.continuity || 0; reqs.push({ id: 'continuity', label: CONTINUITY.name, icon: '⏳', have, need, short: Math.max(0, need - have), ratio: Math.min(1, have / need), unit: 'ステップ', met: false, advice: ADVICE.continuity }); }
-    else reqs.push({ id: 'continuity', label: CONTINUITY.name, icon: '⏳', have: m.continuity || 0, need: CONTINUITY.tiers[next.C - 1] || 0, short: 0, ratio: 1, unit: 'ステップ', met: true, advice: ADVICE.continuity });
+    if (res.C < next.C) { const need = (res.rules || CURRENT_RULES).tiers[next.C - 1], have = m.continuity || 0; reqs.push({ id: 'continuity', label: CONTINUITY.name, icon: '⏳', have, need, short: Math.max(0, need - have), ratio: Math.min(1, have / need), unit: 'ステップ', met: false, advice: ADVICE.continuity }); }
+    else reqs.push({ id: 'continuity', label: CONTINUITY.name, icon: '⏳', have: m.continuity || 0, need: (res.rules || CURRENT_RULES).tiers[next.C - 1] || 0, short: 0, ratio: 1, unit: 'ステップ', met: true, advice: ADVICE.continuity });
     for (const [l, n] of next.K) {
       const have = res.K[l], met = have >= n, cands = res.axes.filter((a) => !(a.tier !== null && a.tier >= l)).map((a) => {
         const ax = AXES.find((x) => x.id === a.id), target = AXIS_TARGET(ax, l), v = a.value; let short = null;
@@ -104,9 +117,9 @@
   // It is read from the same `evaluate` result and the same tier tables, so it can never disagree with the rank actually judged; it makes nothing easier.
   function checklist(res, m) {
     if (!res || !res.judged) return { judged: false, reason: res ? res.reason : '判定中', items: [] };
-    const next = RANKS[res.rankIndex + 1]; if (!next) return { judged: true, from: RANKS[res.rankIndex].id, to: null, items: [], note: '判定できる範囲の最高です（Ωは未判定）' };
+    const next = (res.rules || CURRENT_RULES).RANKS[res.rankIndex + 1]; if (!next) return { judged: true, from: (res.rules || CURRENT_RULES).RANKS[res.rankIndex].id, to: null, items: [], note: '判定できる範囲の最高です（Ωは未判定）' };
     const items = [], maxL = Math.max(...next.K.map(([l]) => l)), minL = Math.min(...next.K.map(([l]) => l));
-    if (next.C > 0) { const need = CONTINUITY.tiers[next.C - 1], have = m.continuity || 0; items.push({ id: 'continuity', label: '長期生存', icon: '⏱', status: res.C >= next.C ? 'met' : have >= 0.75 * need ? 'near' : 'short', have, need, unit: 'ステップ' }); }
+    if (next.C > 0) { const need = (res.rules || CURRENT_RULES).tiers[next.C - 1], have = m.continuity || 0; items.push({ id: 'continuity', label: '長期生存', icon: '⏱', status: res.C >= next.C ? 'met' : have >= 0.75 * need ? 'near' : 'short', have, need, unit: 'ステップ' }); }
     for (const a of res.axes) {
       const ax = AXES.find((x) => x.id === a.id), shortRatio = (() => { const target = AXIS_TARGET(ax, minL); if (a.value === null || target === null) return null; return ax.better === 'high' ? Math.max(0, (target - a.value) / Math.max(1e-9, Math.abs(target))) : Math.max(0, (a.value - target) / Math.max(1e-9, Math.abs(target))); })();
       const status = a.value === null ? 'na' : a.tier !== null && a.tier >= maxL ? 'met' : a.tier !== null && a.tier >= minL ? 'part' : shortRatio !== null && shortRatio <= 0.25 ? 'near' : 'short';
@@ -114,7 +127,7 @@
     }
     const rules = next.K.map(([l, n]) => ({ level: l, need: n, have: res.K[l], met: res.K[l] >= n }));
     const contOk = res.C >= next.C, allMet = contOk && rules.every((r) => r.met);
-    return { judged: true, from: RANKS[res.rankIndex].id, to: next.id, items, rules, allMet, note: '段階の高い能力軸の数で決まります（どの軸でも可）。「未計算」は、データがまだ無い軸です。' };
+    return { judged: true, from: (res.rules || CURRENT_RULES).RANKS[res.rankIndex].id, to: next.id, items, rules, allMet, note: '段階の高い能力軸の数で決まります（どの軸でも可）。「未計算」は、データがまだ無い軸です。' };
   }
   // ---- Stage 4.0: the verdict on a single lineage reaching Omega ----
   // Omega is judged from what the lineage really does, never from how the disc looks. Every condition must hold at once, for a long stretch, and none is eased by anything:
@@ -128,7 +141,7 @@
     const indep = res.axes.find((a) => a.id === 'independence'), indepOk = !ctx.civAlive || (indep && indep.tier !== null && indep.tier >= 2);
     const cd = ctx.codon, codonOk = !!cd && cd.packed <= OMEGA_NEED.packedMax && cd.burden <= OMEGA_NEED.burdenMax && cd.redundancy >= OMEGA_NEED.redundancyMin;
     const criteria = [
-      { id: 'rank', label: 'ランクθ', met: res.rankIndex >= RANKS.length - 1, have: res.rank, need: 'θ' },
+      { id: 'rank', label: 'ランクθ', met: res.rankIndex >= (res.rules || CURRENT_RULES).RANKS.length - 1, have: res.rank, need: 'θ' },
       { id: 'continuity', label: '途切れない個体の生存', met: (m.continuity || 0) >= OMEGA_NEED.continuity, have: m.continuity || 0, need: OMEGA_NEED.continuity, unit: 'ステップ' },
       { id: 'axes', label: '全ての能力軸が最高段階', met: allTop, have: topAxes.filter((a) => a.tier >= maxTier(a.id)).length, need: Math.max(5, topAxes.length), unit: '軸' },
       { id: 'autonomy', label: '文明に頼らない自律', met: indepOk, have: ctx.civAlive ? (indep && indep.tier !== null ? indep.tier : 0) : '文明なし', need: '段階2以上（文明がいる間）' },

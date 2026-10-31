@@ -898,6 +898,16 @@
           const alive = zeros(), aliveMaxAge = zeros(); for (const x of pop) { alive[x.lin]++; if (x.age > aliveMaxAge[x.lin]) aliveMaxAge[x.lin] = x.age; }
           return Array.from({ length: NLN }, (_, i) => ({ alive: alive[i], aliveMaxAge: aliveMaxAge[i], maxAgeDead: lstat.maxAgeDead[i], hAt: lstat.hAt[i].slice(), hDe: lstat.hDe[i].slice(), binWidth: 25, dmgIn: lstat.dmgIn[i], dmgOut: lstat.dmgOut[i], spent: lstat.spent[i], dormEnter: lstat.dormEnter[i], dormWake: lstat.dormWake[i], dormDeaths: lstat.dormDeaths[i] }));
         },
+        exportArena(perLineage = 6) { // Stage 5.1: the living arena as a few groups per lineage and realm, for a milestone save. Individuals sharing one genome (clones) form one group.
+          const groups = new Map();
+          for (const x of pop) { const k = x.lin * 64 + x.patch; let m = groups.get(k); if (!m) groups.set(k, m = new Map()); const e = m.get(x.genome); if (e) e.n++; else m.set(x.genome, { lin: x.lin, patch: x.patch, genome: x.genome, n: 1 }); }
+          const perLin = new Map(); for (const m of groups.values()) for (const e of m.values()) { const a = perLin.get(e.lin) || []; a.push(e); perLin.set(e.lin, a); }
+          const out = []; for (const [lin, list] of perLin) {
+            const total = list.reduce((a, e) => a + e.n, 0); list.sort((a, b) => b.n - a.n); const keep = list.slice(0, perLineage), kept = keep.reduce((a, e) => a + e.n, 0);
+            for (const e of keep) out.push({ lin, patch: e.patch, genome: e.genome, n: Math.max(1, Math.round(e.n * total / kept)) });
+          }
+          return out;
+        },
         introduce(lineage, genome, n, realm) { // individuals arriving from outside the arena; their energy is booked as starting energy so the ledger still closes
           let made = 0; for (let i = 0; i < n && pop.length < o.maxPopulation; i++) { const x = newborn(cloneGenome(genome), RM ? realm : realm % o.patches, 1.0, lineage); pop.push(x); ledger.start += x.energy; lstat.immigrants[lineage]++; made++; } return made;
         },

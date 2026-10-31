@@ -23,9 +23,11 @@
   // ---------- storage ----------
   function readSaves() { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch (e) { return {}; } }
   function writeSaves(s) { try { localStorage.setItem(KEY, JSON.stringify(s)); return true; } catch (e) { return false; } }
+  // Stage 5.1: a save is a state taken at a "continue?" screen only (game.milestone()); nothing is saved while the game runs between milestones.
   function putSave(slot, label) {
-    if (!game) return false;
-    const s = readSaves(); s[slot] = { ...game.save(), ts: Date.now(), label: label || describe(game) };
+    if (!game || !game.checkpoint) return false;
+    const snap = game.milestone(); if (!snap) return false;
+    const s = readSaves(); s[slot] = { ...snap, ts: Date.now(), label: label || describe(game) };
     return writeSaves(s);
   }
   function describe(g) { const st = g.live.stats(), wi = g.worldInfo(); if (g.cfg.stage === 4) return `原始の海から ／ ${wi.bpText} ／ ${st.t}ステップ ／ ${g.cfg.heritage ? '特殊モード' : '通常モード'}`; return `${g.cfg.creatures.map((id) => (G.CREATURES7.find((c) => c.id === id) || {}).name).join('・')} ／ ${wi ? wi.bpText + ' ／ ' : ''}${st.t}ステップ ／ ${st.population}体`; }
@@ -60,7 +62,7 @@
   }
   function renderSlots(el, withSave) {
     const s = readSaves(); el.innerHTML = '';
-    const names = [['auto', '自動保存'], ['s1', 'スロット1'], ['s2', 'スロット2'], ['s3', 'スロット3']];
+    const names = [['auto', '節目の自動保存'], ['s1', 'スロット1'], ['s2', 'スロット2'], ['s3', 'スロット3']];
     for (const [k, n] of names) {
       const d = document.createElement('div'); d.className = 'slot';
       const sv = s[k];
@@ -103,23 +105,23 @@
 
   function openMenu(saveFocus) {
     const card = $('modal-card'); card.innerHTML = `<h3>${saveFocus ? '保存' : 'メニュー'}</h3><div id="menu-slots"></div>`;
-    const slots = card.querySelector('#menu-slots'); renderSlots(slots, true);
+    const slots = card.querySelector('#menu-slots'); renderSlots(slots, !!(game && game.checkpoint)); if (!(game && game.checkpoint)) { const n = document.createElement('p'); n.className = 'note'; n.textContent = '保存できるのは、「続けますか？」と出る節目のときだけです。'; card.insertBefore(n, slots); }
     const mk = (t, f, cls) => { const b = document.createElement('button'); b.className = 'btn ' + (cls || '') + ' big'; b.textContent = t; b.onclick = f; card.appendChild(b); };
     mk('閉じて続ける', () => { $('modal').hidden = true; if (!game.pending && !game.isOver) { playing = true; setPP(); } }, 'primary');
-    mk('タイトルに戻る（自動保存します）', () => { putSave('auto'); game = null; playing = false; $('modal').hidden = true; $('play').hidden = true; $('start').hidden = false; renderStart(); });
+    mk('タイトルに戻る（最後の節目より後の進行は失われます）', () => { game = null; playing = false; $('modal').hidden = true; $('play').hidden = true; $('start').hidden = false; renderStart(); });
     $('modal').hidden = false;
   }
 
   function showPrompt() {
-    const p = game.pending; if (!p) return; playing = false; setPP(); putSave('auto');
+    const p = game.pending; if (!p) return; playing = false; setPP();
     const card = $('modal-card'); card.innerHTML = `<h3>分岐点：${p.title}</h3><p class="note">${p.text}</p><p class="note">環境への介入は全系統に平等に働きます。選ぶのは1つだけ。</p>`;
-    for (const o of p.options) { const b = document.createElement('button'); b.className = 'opt' + (o.id === 'auto' ? ' auto' : ''); b.innerHTML = `<b>${o.name}</b><span>${o.text}</span>`; b.onclick = () => { game.choose(o.id, 'once'); putSave('auto'); $('modal').hidden = true; playing = true; setPP(); draw(true); }; card.appendChild(b); }
+    for (const o of p.options) { const b = document.createElement('button'); b.className = 'opt' + (o.id === 'auto' ? ' auto' : ''); b.innerHTML = `<b>${o.name}</b><span>${o.text}</span>`; b.onclick = () => { game.choose(o.id, 'once'); $('modal').hidden = true; playing = true; setPP(); draw(true); }; card.appendChild(b); }
     const c = document.createElement('button'); c.className = 'opt auto'; c.innerHTML = '<b>以後ずっと自動にする</b><span>連続自動モードをONにして、この分岐点も自動で進めます。あとで画面の「自動イベント」ボタンでOFFに戻せます。</span>';
-    c.onclick = () => { game.setAutoContinuous(true); game.choose('auto', 'continuous'); setAutoBtn(); putSave('auto'); $('modal').hidden = true; playing = true; setPP(); draw(true); }; card.appendChild(c);
+    c.onclick = () => { game.setAutoContinuous(true); game.choose('auto', 'continuous'); setAutoBtn(); $('modal').hidden = true; playing = true; setPP(); draw(true); }; card.appendChild(c);
     $('modal').hidden = false;
   }
   function showEnd() {
-    playing = false; setPP(); putSave('auto');
+    playing = false; setPP();
     const st = game.live.stats(), card = $('modal-card');
     card.innerHTML = `<h3>${st.population ? '観察終了' : '絶滅しました'}</h3><p style="white-space:pre-line">${game.summary().text}</p>`;
     const b = document.createElement('button'); b.className = 'btn primary big'; b.textContent = 'タイトルに戻る'; b.onclick = () => { game = null; $('modal').hidden = true; $('play').hidden = true; $('start').hidden = false; renderStart(); }; card.appendChild(b);
@@ -128,9 +130,9 @@
 
   function loadSlot(k) {
     const sv = readSaves()[k]; if (!sv) return;
-    let g; try { g = G.loadGame(E, sv); } catch (e) { toast(String(e.message || '').startsWith('セーブが壊れています') ? e.message : '読み込めませんでした'); return; }
+    let g; try { g = G.loadGame(E, sv); } catch (e) { toast('読み込めませんでした：' + String(e.message || e) + '（保存データは消していません）'); return; }
     playing = false; loading = { g, target: sv.t, savedAt: sv.ts };
-    const card = $('modal-card'); card.innerHTML = `<h3>読み込み中…</h3><p class="note">${sv.label}<br>保存した地点まで再現しています（同じ結果になります）。</p><div class="prog"><div id="prog"></div></div>`;
+    const card = $('modal-card'); card.innerHTML = `<h3>読み込み中…</h3><p class="note">${sv.label}<br>${sv.kind === 'milestone' ? '節目の保存から再開します（すぐ終わります）。' : '古い形式のセーブです。最初から操作を再現するため、時間がかかります（同じ結果になります）。'}</p><div class="prog"><div id="prog"></div></div>`;
     $('modal').hidden = false; $('start').hidden = true; $('play').hidden = false;
     const tick = () => {
       const t0 = performance.now();
@@ -151,14 +153,14 @@
     if (playing && !game.pending && !game.checkpoint && !game.isOver) {
       const t0 = performance.now();
       if (skipping) {
-        while (performance.now() - t0 < 12 && !game.pending && !game.checkpoint && !game.isOver) { game.advance(25); if (game.eventsSince(skipping.seq0).some((e) => STOP_KINDS.has(e.kind)) || game.t - skipping.t0 >= MAX_SKIP) { stopSkip(false); break; } }
+        while (performance.now() - t0 < 12 && !game.pending && !game.checkpoint && !game.isOver) { game.advance(5); if (game.eventsSince(skipping.seq0).some((e) => STOP_KINDS.has(e.kind)) || game.t - skipping.t0 >= MAX_SKIP) { stopSkip(false); break; } }
         if (skipping) $('skipnote').textContent = `早送り中… ${(game.t - skipping.t0).toLocaleString('ja-JP')}ステップ`; else acc = 0;
       } else {
-        acc += dt * SPEEDS[speedIdx]; const budget = speedIdx >= 4 ? 11 : 8, chunk = speedIdx >= 4 ? 25 : 10;
+        acc += dt * SPEEDS[speedIdx]; const budget = speedIdx >= 4 ? 11 : 8, chunk = 5; // Stage 5.1: small chunks (a 25-step chunk can take ~40 ms on a phone, longer than the whole frame budget, which froze the clock and delayed touches)
         while (acc >= 1 && performance.now() - t0 < budget && !game.pending && !game.checkpoint && !game.isOver) { const n = Math.min(Math.floor(acc), chunk); game.advance(n); acc -= n; }
       }
       if (acc > SPEEDS[speedIdx] * 0.2) acc = SPEEDS[speedIdx] * 0.2; // drop the backlog instead of falling ever further behind
-      if (game.t - lastAuto >= 500) { putSave('auto'); lastAuto = game.t; metaSync(); }
+      if (game.t - lastAuto >= 500) { lastAuto = game.t; metaSync(); } // Stage 5.1: no periodic save of the game (only the codex and feats records are synced)
       if (game.pending) { skipping = null; $('skip').textContent = '⏭ 次の出来事まで早送り'; showPrompt(); } else if (game.checkpoint) showCheckpoint(); else if (game.isOver) showEnd();
       const now = performance.now(); if (now - measured.t >= 1000) { measured = { rate: (game.t - measured.steps) / ((now - measured.t) / 1000), t: now, steps: game.t }; showSpeed(); }
     } else { measured = { rate: 0, t: performance.now(), steps: game.t }; showSpeed(); }
@@ -538,16 +540,17 @@
   // checkpoint: a pause with a choice. No fixed end: the world and the ecosystem stay as they are when you continue.
   let cpShown = false;
   function showCheckpoint() {
-    const c = game.checkpoint; if (!c || cpShown) return; cpShown = true; playing = false; skipping = null; setPP(); putSave('auto');
+    const c = game.checkpoint; if (!c || cpShown) return; cpShown = true; playing = false; skipping = null; setPP(); const autoSaved = putSave('auto'); // the milestone save
     const ti = game.timeInfo(), card = $('modal-card'), rk = game.rank, st = game.live.stats(); card.className = 'card cpmodal';
     metaSync(true);
     if (c.kind === 'present') card.innerHTML = `<h3>現代に着きました</h3><p class="note">ここまでは地球の歴史に沿った外部条件でした。これから先は未来史で、生き物にも文明にも決まった筋書きはありません。</p><div class="sumline">図鑑 <b>${game.codex().length}</b>件／偉業 <b>${game.feats().length}</b>件／生き残っている系統 <b>${game.live.stats().lineageAlive.filter((n) => n > 0).length}</b></div>`; else if (c.kind === 'omega') card.innerHTML = `<h3 class="omega-h">Ω</h3><p class="note"><b>${game.omega ? game.omega.name : ''}</b>が、自力で極めて長く存続する生命（Ωコドン）に到達しました。判定は、ランクθ・長い個体の生存・全ての能力軸・文明に頼らない自律・コドンの安定を、長く保ち続けたことによります。円盤の形ではありません。</p><div class="sumline">${game.omega ? bpText(game.omega.bp) : ''}</div>`; else
     if (['warning', 'catastrophe', 'aftermath', 'earth-ended'].includes(c.kind)) card.innerHTML = catCheckpointCard(c); else
     card.innerHTML = `<h3>${c.kind === 'focus-extinct' ? 'あなたが選んだ系統が絶えました' : '節目'}</h3><p class="note">${c.kind === 'focus-extinct' ? '敗北条件はまだ実装していません。観察は続けられます（競争相手や背景の生き物は、そのまま続きます）。' + (ADAPT() ? 'ほかに生き残っている系統があれば、画面の系統ボタンで操作する系統を切り替えられます（世界はリセットされません）。' : '') : `${ti.steps.toLocaleString('ja-JP')}ステップ（${game.historyInfo() ? 'K–Pg境界から約' + game.historyInfo().yearsSinceImpact.toFixed(0) + '年・仮定' : TM.format(ti.steps, assume) + '・仮定'}）に達しました。ここまでの様子を確認して、続けるか選べます。`}</p><p>累積世代 ${NUM(ti.generations)}／個体数 ${st.population}／ランク 現在 ${rk.current ? rk.current.rank : '—'}・過去最高 ${rk.best ? rk.best.rank : '—'}（暫定）</p>`;
+    { const n = document.createElement('p'); n.className = 'note'; n.textContent = autoSaved ? '💾 この節目を「節目の自動保存」に保存しました。保存できるのは節目だけで、次の節目までの進行は、読み込むと失われます。' : '⚠ この節目は保存できませんでした（保存容量が足りない可能性があります）。次の節目までの進行は、読み込むと失われます。'; card.appendChild(n); }
     const mk = (t, f, cls) => { const b = document.createElement('button'); b.className = 'btn big ' + (cls || ''); b.textContent = t; b.onclick = f; card.appendChild(b); };
     mk('続行する（生命と生態系はそのまま）', () => { game.continueFromCheckpoint(); cpShown = false; card.className = 'card'; $('modal').hidden = true; playing = true; setPP(); }, 'primary');
     mk('保存する', () => { toast(putSave('s1', null) ? 'スロット1に保存しました' : '保存できませんでした'); });
-    mk('最初からやり直す', () => { if (!confirm('いまの世界は失われます（自動保存は残ります）。最初からやり直しますか？')) return; putSave('auto'); cpShown = false; card.className = 'card'; game = null; playing = false; $('modal').hidden = true; $('play').hidden = true; $('start').hidden = false; renderStart(); });
+    mk('最初からやり直す', () => { if (!confirm('いまの世界は失われます（直前の節目の保存は残ります）。最初からやり直しますか？')) return; cpShown = false; card.className = 'card'; game = null; playing = false; $('modal').hidden = true; $('play').hidden = true; $('start').hidden = false; renderStart(); });
     $('modal').hidden = false;
   }
   // fast-forward to the next notable event (at most MAX_SKIP steps), then stop and show what happened
@@ -1192,7 +1195,7 @@
   }
 
 
-  document.addEventListener('visibilitychange', () => { if (document.hidden && game) { putSave('auto'); metaSync(true); } });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && game) { metaSync(true); } }); // Stage 5.1: no game save here (milestones only)
   renderStart(); requestAnimationFrame(frame);
   window.__omega = { layoutNames: () => [0, 1, 2, 3].map((slot) => E.REALM_DEFS[REALM_OF_SLOT[slot]].name), speeds: SPEEDS, get hv() { return hv; }, get game() { return game; }, begin, setSpeed, loadSlot, get playing() { return playing; } };
 })();
