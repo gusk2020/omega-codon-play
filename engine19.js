@@ -477,7 +477,7 @@
     const FREE = !!(V31 && V31.free && RM), offPairs = V31 ? Array.from({ length: NLN }, () => new Array(16).fill(0)) : null;
     const CD = !!(V31 && o.v31.codon), O2S = V31 && o.v31.o2 ? { v: 1 } : null;
     const TG = V31 && V31.tgt ? { plant: zeros(), animal: zeros() } : null;
-    const EV = V31 && V31.evo ? { list: [], nextId: 1, rate: { exchange: 0.0004, fusion: 0.0003, sep: 0.02, ...(o.v31.rates || {}) }, counts: Array.from({ length: NLN }, () => ({ strengthen: 0, weaken: 0, newcap: 0, alter: 0, loss: 0, behaviour: 0, exchange: 0, fusion: 0, separation: 0, compress: 0, 'compress-lossy': 0, 'compress-clean': 0, unpack: 0 })), rand: null } : null;
+    const EV = V31 && V31.evo ? { list: [], nextId: (o.v31 && o.v31.evNextId) || 1, rate: { exchange: 0.0004, fusion: 0.0003, sep: 0.02, ...(o.v31.rates || {}) }, counts: Array.from({ length: NLN }, () => ({ strengthen: 0, weaken: 0, newcap: 0, alter: 0, loss: 0, behaviour: 0, exchange: 0, fusion: 0, separation: 0, compress: 0, 'compress-lossy': 0, 'compress-clean': 0, unpack: 0 })), rand: null } : null;
     if (EV) EV.rand = rng((o.seed * 7919) ^ 0x3C6EF3);
     const frRand = V31 ? rng((o.seed * 104729) ^ 0x7F4A7C) : null;
     if (EV) {
