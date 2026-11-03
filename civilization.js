@@ -1,6 +1,6 @@
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory(); else root.OmegaCiv = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./mulberry')); else root.OmegaCiv = factory(root.OmegaMulberry);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (mulberry) {
   'use strict';
   // Intelligent civilisation, as a coarse world-scale model (Stage 2.0).
   //
@@ -32,7 +32,6 @@
   };
   const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
   const sat = (x) => x / (1 + x);
-  function mulberry(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
   const poisson = (rng, lam) => { if (lam <= 0) return 0; if (lam > 30) return Math.round(lam); const L = Math.exp(-lam); let k = 0, p = 1; do { k++; p *= rng(); } while (p > L && k < 80); return k - 1; };
 
   // The world state this module owns. `residue` is what outlives any one civilisation.

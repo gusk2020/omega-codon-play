@@ -1,6 +1,6 @@
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory(typeof require === 'function' ? require('./dish2') : null); else root.OmegaDishView = factory(root.OmegaDish2);
-})(typeof globalThis !== 'undefined' ? globalThis : this, function (D2) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./dish2'), require('./colors')); else root.OmegaDishView = factory(root.OmegaDish2, root.OmegaColors);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (D2, COLORS) {
   'use strict';
   // Drawing and hit-testing for the circular dish (Stage 6). Pure canvas code: it reads a `dish2()` result and a view state, and changes nothing in the game.
   const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
@@ -13,8 +13,7 @@
   function spreadFactor(d) { const present = d.presentYears || 0; if (!present) return 1; return 1 + 0.25 * clamp((d.years - present) / 1e9, 0, 1); }
   function beadPos(b, centre, f) { return { x: centre.x + (b.x - centre.x) * f, y: centre.y + (b.y - centre.y) * f }; }
   function centroid(beads) { let x = 0, y = 0, w = 0; for (const b of beads) { const m = b.alive ? 1 + b.n : 0.5; x += b.x * m; y += b.y * m; w += m; } return w ? { x: x / w, y: y / w } : { x: 0, y: 0 }; }
-  const hex = (h) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
-  const rgba = (h, a) => { const c = hex(h); return `rgba(${c[0]},${c[1]},${c[2]},${a})`; };
+  const { rgba } = COLORS;
   // beads of every lineage with their screen positions (shared by draw and hit)
   function layout(W, H, d, vs) {
     const g = geom(W, H, vs), f = spreadFactor(d), out = [];

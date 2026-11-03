@@ -1,6 +1,6 @@
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory(); else root.OmegaPhyloTree = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./colors')); else root.OmegaPhyloTree = factory(root.OmegaColors);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (COLORS) {
   'use strict';
   // Phylogeny layout and drawing (Stage 6). The same recorded events (game.phylo()) are laid out three ways:
   //   'rect'   : time runs left to right, one band per lineage (rectangular tree)
@@ -46,8 +46,7 @@
     for (const l of p.links) { const to = nodePos.get(l.to); if (!to) continue; const f = rootPos.get(l.fromLin); if (f === undefined) continue; out.links.push({ type: l.type, fromLin: l.fromLin, to: l.to, from: place(f, tOf(l.y)), toPt: to }); }
     return out;
   }
-  const hex = (h) => { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
-  const rgba = (h, a) => { const c = hex(h); return `rgba(${c[0]},${c[1]},${c[2]},${a})`; };
+  const { rgba } = COLORS;
   const newView = () => ({ zoom: 1, px: 0, py: 0, mode: 'circle', limit: 160, collapsed: new Set(), selLin: null, selNode: null });
   function frame(W, H, vs, mode) { const R0 = Math.min(W, H) / 2 - 8; if (mode === 'rect') { const w = W - 16, h = H - 16; return { ox: W / 2 + vs.px * w / 2, oy: H / 2 + vs.py * h / 2, sx: w * vs.zoom, sy: h * vs.zoom, rect: true, cx: W / 2, cy: H / 2 }; } return { ox: W / 2 + vs.px * R0, oy: (mode === 'fan' ? H * 0.62 : H / 2) + vs.py * R0, sx: R0 * vs.zoom, sy: R0 * vs.zoom, rect: false }; }
   const scr = (fr, pt, mode) => (fr.rect ? { x: fr.ox + (pt.x - 0.5) * fr.sx, y: fr.oy + (pt.y - 0.5) * fr.sy } : { x: fr.ox + pt.x * fr.sx, y: fr.oy + pt.y * fr.sy });

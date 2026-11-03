@@ -1,6 +1,6 @@
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory(); else root.OmegaCatastrophe = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./mulberry')); else root.OmegaCatastrophe = factory(root.OmegaMulberry);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (mulberry) {
   'use strict';
   // Great catastrophes of the long history (Stage 3.0): one crisis in each of the 10-, 20- and 30-hundred-million-year eras (years since the start, which is the
   // end-Cretaceous impact 66 Myr ago). Nothing here is "scripted": the time of each crisis, its kind, its size and whether the world can recover are drawn from
@@ -35,7 +35,6 @@
   ];
   const SCALE_CLASS = [[1.3, '大'], [2.0, '非常に大'], [3.2, '極大'], [Infinity, '生命圏規模']];
   const classOf = (s) => (SCALE_CLASS.find(([m]) => s < m) || SCALE_CLASS[3])[1];
-  function mulberry(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
   const pick = (rng, w, skip) => { let tot = 0; for (const [k, v] of Object.entries(w)) if (k !== skip && k !== 'compound') tot += v; let u = rng() * tot; for (const [k, v] of Object.entries(w)) { if (k === skip || k === 'compound') continue; u -= v; if (u <= 0) return k; } return 'impact'; };
   const gauss = (rng) => { let s = 0; for (let i = 0; i < 6; i++) s += rng(); return (s - 3) / 0.7071; };
   // The schedule of the whole history, from the seed alone. `opts.startElapsed` is a TEST-ONLY shortcut: it moves every crisis nearer so that a test can reach one quickly.

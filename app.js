@@ -33,6 +33,11 @@
   function describe(g) { const st = g.live.stats(), wi = g.worldInfo(); if (g.cfg.stage === 4) return `原始の海から ／ ${wi.bpText} ／ ${st.t}ステップ ／ ${g.cfg.heritage ? '特殊モード' : '通常モード'}`; return `${g.cfg.creatures.map((id) => (G.CREATURES7.find((c) => c.id === id) || {}).name).join('・')} ／ ${wi ? wi.bpText + ' ／ ' : ''}${st.t}ステップ ／ ${st.population}体`; }
   function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => { t.hidden = true; }, 1800); }
 
+  // a big button appended to a modal card; the class list keeps the order the screens always used ('btn' + classes + 'big')
+  const cardButton = (card, text, onclick, cls) => { const b = document.createElement('button'); b.className = 'btn big ' + (cls || ''); b.textContent = text; b.onclick = onclick; card.appendChild(b); };
+  // DOM writes only when the text or markup really changed (the page is redrawn many times a second; an unchanged write still costs layout and replaces the nodes under a finger)
+  const setText = (el, text) => { if (el.textContent !== text) el.textContent = text; };
+  const setHtml = (el, html) => { if (el._html === html) return false; el._html = html; el.innerHTML = html; return true; };
   // Stage 6: the same compact world summary on every save screen (slot list, before saving, load confirmation, right after loading)
   const fmtTs = (ts) => { try { return new Date(ts).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
   function renderSummary(s, extra) {
@@ -91,8 +96,8 @@
 
   // ---------- play ----------
   function begin(g) {
-    game = g; document.body.classList.toggle('s31', g.cfg.stage >= 3.1); document.body.classList.toggle('s4', g.cfg.stage === 4); if ($('dishpanel')) { $('dishpanel').hidden = g.cfg.stage !== 4; dpKey = ''; } if (g.cfg.stage >= 3.1) $('skip').textContent = '⏭ 次の出来事';
-    if (g.cfg.stage === 4) { $('tabs').innerHTML = '<button data-tab="codex" class="on">図鑑</button><button data-tab="phylo">系統樹</button><button data-tab="codon">コドン</button><button data-tab="feats">偉業</button><button data-tab="log">年表</button><button data-tab="detail">詳細</button>'; tab = 'codex'; runId = Date.now(); const m = Meta.load()[g.cfg.heritage ? 'special' : 'normal'] || Meta.blank(); metaKnown = new Set(Object.keys(m.codex)); achSeen = 0; secSmooth = null; metaT = -1; for (const id of ['world', 'stat', 'ind', 'rank', 'trait', 'graph', 'env', 'log', 'codex', 'phylo', 'codon', 'feats', 'about']) $('tab-' + id).hidden = id !== 'codex'; } else { $('tabs').innerHTML = TABS_ORIG; tab = 'world'; for (const id of ['world', 'stat', 'ind', 'rank', 'trait', 'graph', 'env', 'log', 'codex', 'phylo', 'codon', 'feats', 'about']) { const e = $('tab-' + id); if (e) e.hidden = id !== 'world'; } $('detailnav').hidden = true; }
+    game = g; document.body.classList.toggle('s31', g.cfg.stage >= 3.1); document.body.classList.toggle('s4', g.cfg.stage === 4); if ($('dishpanel')) { $('dishpanel').hidden = g.cfg.stage !== 4; views.resetDishPanel(); } if (g.cfg.stage >= 3.1) $('skip').textContent = '⏭ 次の出来事';
+    if (g.cfg.stage === 4) { $('tabs').innerHTML = '<button data-tab="codex" class="on">図鑑</button><button data-tab="phylo">系統樹</button><button data-tab="codon">コドン</button><button data-tab="feats">偉業</button><button data-tab="log">年表</button><button data-tab="detail">詳細</button>'; tab = 'codex'; runId = Date.now(); const m = Meta.load()[g.cfg.heritage ? 'special' : 'normal'] || Meta.blank(); metaKnown = new Set(Object.keys(m.codex)); achSeen = 0; metaT = -1; for (const id of ['world', 'stat', 'ind', 'rank', 'trait', 'graph', 'env', 'log', 'codex', 'phylo', 'codon', 'feats', 'about']) $('tab-' + id).hidden = id !== 'codex'; } else { $('tabs').innerHTML = TABS_ORIG; tab = 'world'; for (const id of ['world', 'stat', 'ind', 'rank', 'trait', 'graph', 'env', 'log', 'codex', 'phylo', 'codon', 'feats', 'about']) { const e = $('tab-' + id); if (e) e.hidden = id !== 'world'; } $('detailnav').hidden = true; }
     updateMapCap(); startTraits = g.series[0] ? g.series[0].traits.slice() : null; playing = true; lastAuto = g.t;
     $('start').hidden = true; $('play').hidden = false; $('modal').hidden = true;
     buildSpeeds(); measured = { rate: 0, t: performance.now(), steps: g.t };
@@ -116,7 +121,7 @@
   function openMenu(saveFocus) {
     const card = $('modal-card'); card.innerHTML = `<h3>${saveFocus ? '保存' : 'メニュー'}</h3><div id="menu-slots"></div>`;
     const slots = card.querySelector('#menu-slots'); renderSlots(slots, !!(game && game.checkpoint)); if (!(game && game.checkpoint)) { const n = document.createElement('p'); n.className = 'note'; n.textContent = '保存できるのは、「続けますか？」と出る節目のときだけです。'; card.insertBefore(n, slots); }
-    const mk = (t, f, cls) => { const b = document.createElement('button'); b.className = 'btn ' + (cls || '') + ' big'; b.textContent = t; b.onclick = f; card.appendChild(b); };
+    const mk = (t, f, cls) => cardButton(card, t, f, cls);
     mk('閉じて続ける', () => { $('modal').hidden = true; if (!game.pending && !game.isOver) { playing = true; setPP(); } }, 'primary');
     mk('タイトルに戻る（最後の節目より後の進行は失われます）', () => { game = null; playing = false; $('modal').hidden = true; $('play').hidden = true; $('start').hidden = false; renderStart(); });
     $('modal').hidden = false;
@@ -143,7 +148,7 @@
   function loadSlot(k) {
     const sv = readSaves()[k]; if (!sv) return; const card = $('modal-card'); card.className = 'card';
     card.innerHTML = `<h3>この保存を読み込みますか？</h3>${sv.kind === 'milestone' ? renderSummary(sv.summary, '保存 ' + fmtTs(sv.ts)) : `<div class="sv"><div class="sv-h"><b>${sv.label}</b></div><div class="sv-k">保存 ${fmtTs(sv.ts)}</div></div>`}<p class="note">${sv.kind === 'milestone' ? RESTORE_NOTE : '古い形式のセーブです。最初から操作を再現するため、時間がかかります（同じ結果になります）。'}</p>${game ? '<p class="note"><b>いま遊んでいる世界の、最後の節目より後の進行は失われます。</b></p>' : ''}`;
-    const mk = (t, f, cls) => { const b = document.createElement('button'); b.className = 'btn big ' + (cls || ''); b.textContent = t; b.onclick = f; card.appendChild(b); };
+    const mk = (t, f, cls) => cardButton(card, t, f, cls);
     mk('読み込む', () => doLoad(k, sv), 'primary'); mk('やめる', () => { $('modal').hidden = true; if (game && !game.pending && !game.checkpoint && !game.isOver) { playing = true; setPP(); } });
     $('modal').hidden = false; playing = false; if (game) setPP();
   }
@@ -227,9 +232,6 @@
       bx.fillStyle = '#7f93a8'; bx.textAlign = 'right'; bx.fillText(g.inArena ? `アリーナに${g.inArena}体` : g.extinct ? '' : `移入${g.immigrantsTotal}`, W - 6, y + 4);
     }); bx.textAlign = 'left';
   }
-  function drawLinbar() {
-    const rep = game.lineageReport(); $('linbar').innerHTML = rep.filter((l) => l.alive > 0 || l.role === 'focus').map((l) => { const c = l.change100; return `<span><i style="color:${l.color}">${l.role === 'focus' ? '●' : '■'}</i> ${l.name}${l.role === 'rival' ? '（相手）' : l.role === 'immigrant' ? '（移入）' : ''} <b>${l.alive}</b>${c === null ? '' : `<span class="${c > 0 ? 'up' : c < 0 ? 'dn' : ''}"> ${c > 0 ? '▲' : c < 0 ? '▼' : '＝'}${Math.abs(c)}</span>`}</span>`; }).join('');
-  }
   function kv(rows) { return '<div class="kv">' + rows.map(([a, b, w]) => (w ? `<span class="w"><small>${a}</small><br>${b}</span>` : `<span>${a}</span><span>${b}</span>`)).join('') + '</div>'; }
   function linRows(list) {
     return list.map((l) => `<div class="lin"><div><i style="color:${l.color}">${game.roleOf(l.lin) === 'rival' ? '■' : '●'}</i> ${l.name}<small>${l.extinct ? (l.extinctAt !== null ? l.extinctAt + 'ステップで絶えた' : '絶えた') : '生存中'}・生存個体の累計捕獲 ${l.catchesOfLiving}</small></div><div class="num">${l.alive} 体<small class="${l.change100 > 0 ? 'up' : l.change100 < 0 ? 'dn' : ''}">${l.change100 === null ? '増減：計測中' : '直近約100ステップ ' + (l.change100 > 0 ? '+' : '') + l.change100}</small></div></div>`).join('');
@@ -309,12 +311,6 @@
     wrapVisual('log', logVisual(), game.events.slice().reverse().slice(0, 150).map((e) => `<div class="ev ${e.kind}"><small>${e.y !== undefined ? fmtY(e.y) + '後／' : ''}${e.t}ステップ／約${e.gen}世代</small>${evIcon(e)} ${e.text}</div>`).join('') || '<p class="note">まだ出来事はありません。</p>', 'すべての出来事');
   }
   // The headline time is the elapsed time under an ASSUMED step length (uncalibrated), the era, and the cumulative generations. Steps are small print.
-  function drawTimeline(ti) {
-    const hi = game.historyInfo(), unit = hi ? 'day' : assume, a = TM.find(unit);
-    const era = hi ? `年代：<b>${HS.formatYearsBP(HS.KPG_AGE_YEARS_BP)}</b>（K–Pg境界）＋ 約${hi.yearsSinceImpact.toFixed(1)}年` : `年代：自由開始（地球史とは対応させていません）`;
-    $('timeline').innerHTML = `${era}　<small>内部 ${ti.steps.toLocaleString('ja-JP')}ステップ／${a.name}（仮定・未校正）</small><br><small>参考：世代×その時点の平均寿命 ≈ ${NUM(ti.lifespanReferenceSteps)}ステップ分 ≈ ${TM.format(ti.lifespanReferenceSteps, unit)}　<a href="#" id="why-time" style="color:var(--accent)">これは何？</a></small>`;
-    const w = $('why-time'); if (w) w.onclick = (e) => { e.preventDefault(); openTimeInfo(); };
-  }
   function openTimeInfo() {
     if (ADAPT()) { const card = $('modal-card'), p = playing; playing = false; setPP(); card.className = 'card'; card.innerHTML = `<h3>時間のしくみ</h3>${timeExplainHtml(game.worldInfo())}`; const b = document.createElement('button'); b.className = 'btn primary big'; b.textContent = '閉じる'; b.onclick = () => { $('modal').hidden = true; if (p && !game.pending && !game.checkpoint && !game.isOver) { playing = true; setPP(); } }; card.appendChild(b); $('modal').hidden = false; return; }
     const ti = game.timeInfo(), card = $('modal-card'), p = playing; playing = false; setPP();
@@ -517,10 +513,6 @@
 
   // ---------- rank (α → Ω), individuals, checkpoints, fast-forward to the next event ----------
   const RANK_NOTE = 'ランクは、能力の合計や知能の高さではなく、個体が自力で長く生き続ける力から判定する<b>暫定の判定</b>です。判定できる範囲だけを使い、未実装の能力は採点していません。';
-  function drawRankbar() {
-    const rk = game.rank, cur = rk.current, best = rk.best;
-    $('rankbar').innerHTML = `<span class="rk">${cur ? cur.rank : '？'}</span><span>ランク（現在・暫定）　<small>過去最高 <b>${best ? best.rank : '—'}</b>${cur ? '' : '／判定中または個体が少なすぎます'}　Ω：判定未実装</small></span>`;
-  }
   function tierBar(t) { return '<div class="tierbar">' + [1, 2, 3, 4].map((k) => `<i class="${t !== null && t >= k ? 'on' : ''}"></i>`).join('') + '</div>'; }
   function fmtVal(a) { if (a.value === null) return a.why || '判定できません'; return a.id === 'efficiency' ? a.value.toFixed(3) : a.id === 'range' ? `${a.value}領域` : a.id === 'competition' ? `${NUM(a.value)}ステップ` : a.value.toFixed(a.id === 'repair' ? 3 : 2); }
   function drawRankTab() {
@@ -566,7 +558,7 @@
     card.innerHTML = `<h3>${c.kind === 'focus-extinct' ? 'あなたが選んだ系統が絶えました' : '節目'}</h3><p class="note">${c.kind === 'focus-extinct' ? '敗北条件はまだ実装していません。観察は続けられます（競争相手や背景の生き物は、そのまま続きます）。' + (ADAPT() ? 'ほかに生き残っている系統があれば、画面の系統ボタンで操作する系統を切り替えられます（世界はリセットされません）。' : '') : `${ti.steps.toLocaleString('ja-JP')}ステップ（${game.historyInfo() ? 'K–Pg境界から約' + game.historyInfo().yearsSinceImpact.toFixed(0) + '年・仮定' : TM.format(ti.steps, assume) + '・仮定'}）に達しました。ここまでの様子を確認して、続けるか選べます。`}</p><p>累積世代 ${NUM(ti.generations)}／個体数 ${st.population}／ランク 現在 ${rk.current ? rk.current.rank : '—'}・過去最高 ${rk.best ? rk.best.rank : '—'}（暫定）</p>`;
     { const s = document.createElement('div'); s.innerHTML = '<div class="note"><b>いまの世界</b>（保存されるのはこの状態です）</div>' + renderSummary(game.summary2()); card.appendChild(s); const rn = document.createElement('p'); rn.className = 'note'; rn.textContent = RESTORE_NOTE; card.appendChild(rn); }
     { const n = document.createElement('p'); n.className = 'note'; n.textContent = autoSaved ? '💾 この節目を「節目の自動保存」に保存しました。保存できるのは節目だけで、次の節目までの進行は、読み込むと失われます。' : '⚠ この節目は保存できませんでした（保存容量が足りない可能性があります）。次の節目までの進行は、読み込むと失われます。'; card.appendChild(n); }
-    const mk = (t, f, cls) => { const b = document.createElement('button'); b.className = 'btn big ' + (cls || ''); b.textContent = t; b.onclick = f; card.appendChild(b); };
+    const mk = (t, f, cls) => cardButton(card, t, f, cls);
     mk('続行する（生命と生態系はそのまま）', () => { game.continueFromCheckpoint(); cpShown = false; card.className = 'card'; $('modal').hidden = true; playing = true; setPP(); }, 'primary');
     mk('保存する', () => { toast(putSave('s1', null) ? 'スロット1に保存しました' : '保存できませんでした'); });
     mk('最初からやり直す', () => { if (!confirm('いまの世界は失われます（直前の節目の保存は残ります）。最初からやり直しますか？')) return; cpShown = false; card.className = 'card'; game = null; playing = false; $('modal').hidden = true; $('play').hidden = true; $('start').hidden = false; renderStart(); });
@@ -908,13 +900,12 @@
     const wi = game.worldInfo(), rk = game.rank, cur = rk.current, best = rk.best;
     // Stage 5.2: the clock is written to the 10,000-year digit, and a big jump is announced for a few seconds (display only)
     { const nowMs = performance.now(); if (hudPrevY === null || wi.years < hudPrevY) { hudPrevY = wi.years; hudJump = 0; } else if (wi.years - hudPrevY >= 1e6) { hudJump += wi.years - hudPrevY; hudJumpUntil = nowMs + 5000; } hudPrevY = wi.years; if (nowMs > hudJumpUntil) hudJump = 0;
-      $('hud-era').textContent = wi.bpText; $('hud-sub').textContent = `開始から ${wi.elapsedText}${hudJump > 0 ? `　⏩ +${G.jaYears(hudJump)}` : ''}`; }
-    $('hud-rank').innerHTML = `<span class="rk">${cur ? cur.rank : '？'}</span><small>最高 <b>${best ? best.rank : 'なし'}</b></small>`;
+      setText($('hud-era'), wi.bpText); setText($('hud-sub'), `開始から ${wi.elapsedText}${hudJump > 0 ? `　⏩ +${G.jaYears(hudJump)}` : ''}`); }
+    setHtml($('hud-rank'), `<span class="rk">${cur ? cur.rank : '？'}</span><small>最高 <b>${best ? best.rank : 'なし'}</b></small>`);
     const th = game.threat(), lv = th ? ['安全', '注意', '危険', '非常に危険'][th.level] : null, col = th ? ['#46c28a', '#f2d13d', '#f2a03d', '#e5586e'][th.level] : null;
     const thr = th ? `<span class="hchip" style="border-color:${col};color:${col}">${S4() ? '●' : ['🟢', '🟡', '🟠', '🔴'][th.level]} ${lv}</span>` : '';
     const civ = wi.civ ? `<span class="hchip">${S4() ? '文明' : '🏛'} ${wi.civ.stage}</span>` : '';
-    $('hud2').innerHTML = thr + civ + catBannerChips();
-    document.querySelectorAll('#hud2 [data-cat]').forEach((e) => { e.onclick = () => openCatDetail(); }); document.querySelectorAll('#hud2 [data-off]').forEach((e) => { e.onclick = () => openOffworld(); });
+    if (setHtml($('hud2'), thr + civ + catBannerChips())) { document.querySelectorAll('#hud2 [data-cat]').forEach((e) => { e.onclick = () => openCatDetail(); }); document.querySelectorAll('#hud2 [data-off]').forEach((e) => { e.onclick = () => openOffworld(); }); }
   }
   function drawRankStrip31() {
     const el = $('rankstrip'); if (!el) return; const c = game.rankChecklist();
@@ -1028,113 +1019,9 @@
     if (modeOf() === 'normal' || true) { const h = game.exportHeritage(); if (h.length) m.heritage = h; } // the relics of the latest world, offered to the special mode
     Meta.store(m);
   }
-  // ---- the dish ----
-  const dishOff = document.createElement('canvas'); dishOff.width = dishOff.height = 168; const dctx = dishOff.getContext('2d'); let dishImg = null;
-  const hex = (c) => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
-  let dishC = { k: -1, g: null, v: null }, secSmooth = null, dishPainted = null;
-  const NOISE = new Float32Array(168 * 168); for (let y = 0; y < 168; y++) for (let x = 0; x < 168; x++) NOISE[y * 168 + x] = hash(x, y) - 0.5; // the edge jitter, computed once
-  const dishNow = () => { const k = Math.floor(game.t / 25); if (dishC.k !== k || dishC.g !== game) dishC = { k, g: game, v: game.dish() }; return dishC.v; };
-  function picto(c, kind, x, y, s, col) {
-    c.save(); c.strokeStyle = col; c.fillStyle = col; c.lineWidth = 1.4; c.lineCap = 'round'; c.lineJoin = 'round'; c.translate(x, y);
-    if (kind === 'water') { for (let k = 0; k < 2; k++) { c.beginPath(); c.moveTo(-s, -s * 0.2 + k * s * 0.7); c.quadraticCurveTo(-s * 0.5, -s * 0.8 + k * s * 0.7, 0, -s * 0.2 + k * s * 0.7); c.quadraticCurveTo(s * 0.5, s * 0.4 + k * s * 0.7, s, -s * 0.2 + k * s * 0.7); c.stroke(); } }
-    else if (kind === 'underground') { for (let k = 0; k < 3; k++) { c.beginPath(); c.moveTo(-s, -s * 0.7 + k * s * 0.7); c.lineTo(s, -s * 0.7 + k * s * 0.7); c.stroke(); } c.beginPath(); c.moveTo(0, -s); c.lineTo(0, s * 0.9); c.stroke(); }
-    else if (kind === 'air') { c.beginPath(); c.arc(-s * 0.4, 0, s * 0.45, Math.PI * 0.5, Math.PI * 1.5); c.arc(0, -s * 0.25, s * 0.55, Math.PI, 0); c.arc(s * 0.45, 0, s * 0.45, Math.PI * 1.5, Math.PI * 0.5); c.closePath(); c.stroke(); }
-    else { c.beginPath(); c.moveTo(-s, s * 0.7); c.lineTo(-s * 0.2, -s * 0.8); c.lineTo(s * 0.3, s * 0.1); c.lineTo(s * 0.6, -s * 0.3); c.lineTo(s, s * 0.7); c.closePath(); c.stroke(); }
-    c.restore();
-  }
-  const KIND_PIC = { water: 'water', underground: 'underground', air: 'air', land: 'land' };
-  function drawDish() {
-    const [W, H2] = fit(cv, cx); cx.clearRect(0, 0, W, H2); const d = dishNow(); if (!d) return;
-    const cxp = W / 2, cyp = H2 / 2, R0 = Math.min(W, H2) / 2 - 8;
-    // sector widths are smoothed so that the layout drifts instead of jumping
-    const target = d.sectors.map((s) => s.a0); if (!secSmooth || secSmooth.g !== game) secSmooth = { g: game, a: target.slice() }; for (let k = 0; k < 4; k++) secSmooth.a[k] += (target[k] - secSmooth.a[k]) * 0.25;
-    // the territories, painted pixel by pixel on a small canvas and scaled up (soft, colony-like edges)
-    const N = dishOff.width, A = d.A, R = d.R;
-    if (dishPainted !== d) { // the picture changes only when the dish is recomputed (every 25 steps); in between the painted image is simply drawn again
-    const id = dctx.createImageData(N, N), px = id.data, cols = d.colors.map(hex), foc = d.focus;
-    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-      const dx = (x + 0.5 - N / 2) / (N / 2), dy = (y + 0.5 - N / 2) / (N / 2), r = Math.sqrt(dx * dx + dy * dy), o = (y * N + x) * 4;
-      if (r > 1) { px[o + 3] = 0; continue; }
-      const noise = NOISE[y * N + x] * 0.9, f = ((Math.atan2(dx, -dy) / (2 * Math.PI)) + 1) % 1, ai = Math.max(0, Math.min(A - 1, Math.floor(f * A + noise))), ri = Math.max(0, Math.min(R - 1, Math.round(r * (R - 1) + noise))), k = ri * A + ai, ow = d.owner[k];
-      if (ow < 0) { px[o] = 14; px[o + 1] = 20; px[o + 2] = 28; px[o + 3] = 255; continue; }
-      const s = d.strength[k], c1 = cols[ow], sc = d.second[k]; let cr = c1[0], cg = c1[1], cb = c1[2];
-      if (sc >= 0) { const c2 = cols[sc]; cr = (cr + c2[0]) / 2; cg = (cg + c2[1]) / 2; cb = (cb + c2[2]) / 2; }
-      const a = 0.30 + 0.7 * Math.min(1, s); px[o] = 14 + (cr - 14) * a; px[o + 1] = 20 + (cg - 20) * a; px[o + 2] = 28 + (cb - 28) * a; px[o + 3] = 255;
-      if (ow === foc) { // the lineage in focus: a pale outline where its territory meets another
-        const k2 = [ri * A + ((ai + 1) % A), ri * A + ((ai + A - 1) % A), Math.min(R - 1, ri + 1) * A + ai, Math.max(0, ri - 1) * A + ai]; if (k2.some((q) => d.owner[q] !== foc)) { px[o] = 235; px[o + 1] = 240; px[o + 2] = 245; }
-      }
-    }
-    dctx.putImageData(id, 0, 0); dishPainted = d; }
-    cx.save(); cx.beginPath(); cx.arc(cxp, cyp, R0, 0, 6.2832); cx.clip(); cx.imageSmoothingEnabled = true; cx.drawImage(dishOff, cxp - R0, cyp - R0, R0 * 2, R0 * 2); cx.restore();
-    cx.strokeStyle = '#2c3f55'; cx.lineWidth = 2; cx.beginPath(); cx.arc(cxp, cyp, R0, 0, 6.2832); cx.stroke();
-    // the civilisation sector (land): its own radial meaning, centre = bound to the environment, outside = changing it
-    const land = d.sectors.find((s) => s.id === 'land');
-    if (d.civ) { cx.save(); cx.beginPath(); cx.arc(cxp, cyp, R0 * d.civ.r1, (land.a0 - 0.25) * 2 * Math.PI, (land.a1 - 0.25) * 2 * Math.PI); cx.arc(cxp, cyp, R0 * d.civ.r0, (land.a1 - 0.25) * 2 * Math.PI, (land.a0 - 0.25) * 2 * Math.PI, true); cx.closePath(); cx.fillStyle = 'rgba(200,205,210,0.22)'; cx.fill(); cx.strokeStyle = 'rgba(220,225,230,0.7)'; cx.setLineDash([3, 3]); cx.stroke(); cx.restore(); }
-    // sector boundaries and pictograms
-    d.sectors.forEach((s) => { const a = (s.a0 - 0.25) * 2 * Math.PI; cx.strokeStyle = 'rgba(160,175,190,0.35)'; cx.lineWidth = 1; cx.beginPath(); cx.moveTo(cxp, cyp); cx.lineTo(cxp + Math.cos(a) * R0, cyp + Math.sin(a) * R0); cx.stroke(); const m = ((s.a0 + s.a1) / 2 - 0.25) * 2 * Math.PI; picto(cx, KIND_PIC[s.id], cxp + Math.cos(m) * (R0 + 0) * 0.93, cyp + Math.sin(m) * R0 * 0.93, 6, 'rgba(225,232,240,0.85)'); });
-    if (d.shape.like) { cx.fillStyle = 'rgba(240,245,250,0.9)'; cx.font = '600 15px system-ui'; cx.textAlign = 'center'; cx.fillText('Ω形', cxp, cyp + 5); cx.textAlign = 'left'; }
-  }
 
-  // ======== Stage 6: the circular dish (dish2.js / dishview.js). The view state is plain UI state; nothing here changes the simulation. ========
-  const DV = OmegaDishView, dview = DV.newView(); let dvGame = null, d2K = -1, d2V = null, gaugeStyle = 'needle', abilOpen = null, legendOpen = false;
-  const selLin = () => { if (!game || !game.sel) return null; const i = game.creatures.findIndex((c) => c.id === game.sel); return i < 0 ? null : i; };
-  function setSel(lin) { game.sel = lin === null ? null : game.creatures[lin].id; abilOpen = null; draw(true); }
-  const dish2Now = () => { const k = Math.floor(game.t / 25); if (d2K !== k || dvGame !== game) { d2K = k; dvGame = game; const v = game.dish2(); d2V = v; } return d2V; };
-  function drawDish2() {
-    const [W, H2] = fit(cv, cx), d = dish2Now(); if (!d) return; dview.sel = selLin(); DV.draw(cx, W, H2, d, dview); drawDishPanel(d);
-  }
-  const ICONS = { tolerance: '🛡️', metabolism: '🔥', repairRate: '🩹', dormancyDepth: '💤', predation: '🦷', movement: '👣', immune: '🧪', fecundity: '🥚' };
-  function gaugeSvg(v) {
-    const x = Math.max(0, Math.min(1, v));
-    if (gaugeStyle === 'bars') { let s = '<svg viewBox="0 0 40 28" width="44" height="30" aria-hidden="true">'; for (let i = 0; i < 5; i++) { const on = x > i / 5 + 0.01, h = 6 + i * 4; s += `<rect x="${2 + i * 7.5}" y="${26 - h}" width="5.5" height="${h}" rx="1" fill="${on ? '#6fd3a0' : '#2c3b4a'}"/>`; } return s + '</svg>'; }
-    const ang = (-90 + 180 * x) * Math.PI / 180, nx = 20 + 14 * Math.sin(ang), ny = 24 - 14 * Math.cos(ang);
-    return `<svg viewBox="0 0 40 28" width="44" height="30" aria-hidden="true"><path d="M4 24 A16 16 0 0 1 36 24" fill="none" stroke="#2c3b4a" stroke-width="4"/><path d="M4 24 A16 16 0 0 1 36 24" fill="none" stroke="#6fd3a0" stroke-width="4" stroke-dasharray="${(50.3 * x).toFixed(1)} 60"/><line x1="20" y1="24" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="#e8eef5" stroke-width="2" stroke-linecap="round"/><circle cx="20" cy="24" r="2.2" fill="#e8eef5"/></svg>`;
-  }
-  let dpKey = '';
-  function drawDishPanel(d) {
-    const el = $('dishpanel'); if (!el) return; el.hidden = false;
-    const sl = selLin(), L = sl === null ? null : d.lineages.find((l) => l.lin === sl), ab = L ? game.abilities(sl) : null, rk = L ? game.rank.byLin[sl] : null;
-    const key = [game.t, sl, dview.mode, gaugeStyle, abilOpen, legendOpen].join('|'); if (key === dpKey) return; dpKey = key;
-    const aliveN = L ? L.beads.filter((b) => b.alive).length : 0, vac = L ? L.beads.length - aliveN : 0;
-    let h = `<div class="dp-row"><button class="chip${dview.mode === 'path' ? ' on' : ''}" data-dm="path">進化経路</button><button class="chip${dview.mode === 'territory' ? ' on' : ''}" data-dm="territory">勢力圏</button><button class="chip" data-dact="reset">表示を戻す</button><button class="chip${legendOpen ? ' on' : ''}" data-dact="legend">凡例</button></div>`;
-    if (legendOpen) h += '<div class="dp-legend">' + DV.LEGEND.map(([k, t]) => `<div><b>${k}</b><span>${t}</span></div>`).join('') + `<div><b>注意</b><span>${d.sources.land}</span></div><div><b>注意</b><span>${d.sources.civ}</span></div><div><b>代理</b><span>${d.sources.influence}</span></div><div><b>表示</b><span>未来が遠いほど枝を少し広げて描きます（見やすくするための表示で、計算結果は変えません）。絶滅した系統で、場所の記録がないものは、記録開始前に絶えたためです。</span></div></div>`;
-    if (!L) h += `<div class="dp-sel dim">円の中の点か、下の系統の名前をタップすると、その系統の情報が出ます。<br>${d.lineages.filter((l) => !l.extinct).length}系統が現存、${d.lineages.filter((l) => l.extinct).length}系統が絶滅。</div>` + `<div class="dp-chips">${d.lineages.map((l) => `<button class="lchip${l.extinct ? ' dead' : ''}" data-dl="${l.lin}" style="--c:${l.color}"><i></i><b>${l.name}</b><span>${l.extinct ? '絶' : l.alive + '体'}</span></button>`).join('')}</div>`;
-    else {
-      h += `<div class="dp-sel" style="border-color:${L.color}"><div class="dp-name"><i style="background:${L.color}"></i><b>${L.name}</b><span>${L.extinct ? '絶滅' + (L.extinctAt !== null && L.extinctAt !== undefined ? '（' + L.extinctAt + 'ステップ）' : '') : '現存 ' + L.alive + '体'}</span></div>`
-        + `<div class="dp-meta">ランク：現在 <b>${rk && rk.current ? rk.current.rank : '—'}</b> ／ 最高 <b>${rk && rk.best ? rk.best.rank : '—'}</b>　場所：現存 ${aliveN} ／ 絶滅 ${vac}　環境支配力 ${L.influenceReliable ? L.influence.toFixed(2) : '（算出中）'}</div>`
-        + `<div class="dp-row"><button class="chip" data-dact="tree">系統樹で見る</button><button class="chip" data-dact="codon">コドンで見る</button><button class="chip" data-dact="desel">選択を外す</button></div></div>`;
-      h += `<div class="dp-row"><span class="note">能力</span><button class="chip${gaugeStyle === 'needle' ? ' on' : ''}" data-dg="needle">針</button><button class="chip${gaugeStyle === 'bars' ? ' on' : ''}" data-dg="bars">棒</button></div>`;
-      if (ab) { h += '<div class="abil">' + ab.items.map((i) => `<button class="tile${abilOpen === i.id ? ' open' : ''}" data-da="${i.id}"><span class="ic">${ICONS[i.id] || '・'}</span>${gaugeSvg(i.value)}<small>${i.name}</small></button>`).join('') + '</div>'; const op = ab.items.find((i) => i.id === abilOpen); if (op) h += `<div class="abil-d"><b>${ICONS[op.id]} ${op.name}　${Math.round(op.value * 100)}%</b><span>${op.text}。${ab.note}</span></div>`; else h += '<div class="abil-d dim">能力をタップすると詳しい説明が出ます。</div>'; }
-      else h += '<div class="abil-d dim">この系統は現存しないため、能力は表示できません。</div>';
-    }
-    el.innerHTML = h;
-    el.querySelectorAll('[data-dm]').forEach((b) => { b.onclick = () => { dview.mode = b.dataset.dm; dpKey = ''; draw(true); }; });
-    el.querySelectorAll('[data-dl]').forEach((b) => { b.onclick = () => setSel(Number(b.dataset.dl)); });
-    el.querySelectorAll('[data-dg]').forEach((b) => { b.onclick = () => { gaugeStyle = b.dataset.dg; dpKey = ''; draw(true); }; });
-    el.querySelectorAll('[data-da]').forEach((b) => { b.onclick = () => { abilOpen = abilOpen === b.dataset.da ? null : b.dataset.da; dpKey = ''; draw(true); }; });
-    el.querySelectorAll('[data-dact]').forEach((b) => { b.onclick = () => { const a = b.dataset.dact; if (a === 'reset') { Object.assign(dview, { zoom: 1, px: 0, py: 0 }); } else if (a === 'legend') legendOpen = !legendOpen; else if (a === 'desel') { game.sel = null; abilOpen = null; } else if (a === 'tree' || a === 'codon') { const t = document.querySelector(`#tabs [data-tab=${a === 'tree' ? 'phylo' : 'codon'}]`); if (t) t.click(); } dpKey = ''; draw(true); }; });
-  }
-  // pan / pinch / tap on the dish
-  (function dishPointers() {
-    const ptr = new Map(); let tapStart = null, pinch = null;
-    const cssSize = () => { const r = cv.getBoundingClientRect(); return [r.width, r.height]; };
-    const local = (e) => { const r = cv.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
-    cv.addEventListener('pointerdown', (e) => { if (!S4()) return; cv.setPointerCapture(e.pointerId); ptr.set(e.pointerId, local(e)); if (ptr.size === 1) tapStart = { ...local(e), t: performance.now(), moved: 0 }; else { tapStart = null; const [a, b] = [...ptr.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), z: dview.zoom }; } });
-    cv.addEventListener('pointermove', (e) => {
-      if (!S4() || !ptr.has(e.pointerId)) return; const prev = ptr.get(e.pointerId), cur = local(e); ptr.set(e.pointerId, cur); const [W, H2] = cssSize(), R0 = Math.min(W, H2) / 2 - 6;
-      if (ptr.size === 1) { dview.px += (cur.x - prev.x) / R0; dview.py += (cur.y - prev.y) / R0; if (tapStart) tapStart.moved += Math.hypot(cur.x - prev.x, cur.y - prev.y); }
-      else if (ptr.size === 2 && pinch) { const [a, b] = [...ptr.values()]; const dd = Math.hypot(a.x - b.x, a.y - b.y); dview.zoom = Math.max(1, Math.min(8, pinch.z * dd / Math.max(1, pinch.d))); }
-      const lim = dview.zoom; dview.px = Math.max(-lim, Math.min(lim, dview.px)); dview.py = Math.max(-lim, Math.min(lim, dview.py)); if (dview.zoom <= 1.001) { dview.px *= 0.9; dview.py *= 0.9; }
-      if (!playing || dview.zoom > 1) draw(false); else drawDish2();
-    });
-    const up = (e) => {
-      if (!S4()) return; const was = ptr.has(e.pointerId); ptr.delete(e.pointerId); if (ptr.size < 2) pinch = null;
-      if (was && tapStart && ptr.size === 0 && tapStart.moved < 8 && performance.now() - tapStart.t < 600) { const [W, H2] = cssSize(), d = dish2Now(); const h = d ? DV.hit(W, H2, d, dview, tapStart.x, tapStart.y) : null; setSel(h ? h.lin : null); }
-      if (ptr.size === 0) tapStart = null;
-    };
-    cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
-    cv.addEventListener('wheel', (e) => { if (!S4()) return; e.preventDefault(); dview.zoom = Math.max(1, Math.min(8, dview.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15))); draw(false); }, { passive: false });
-  })();
+  // the Stage 6 screens (circular dish, phylogeny, codon) live in views6.js
+  const views = OmegaViews6.create({ $, S4, fit, cv, cx, F, G, game: () => game, draw: (force) => draw(force), isPlaying: () => playing });
   function updateMapCap() { const el = $('mapcap'); if (el) el.textContent = S4() ? 'タップで系統を選択／ピンチで拡大・ドラッグで移動／左＝陸 右＝水／半径＝圧力／上＝低温 下＝高温' : '円の大きさ＝環境支配力（個体数ではない）／点線＝参考の道筋'; }
   // ---- the achievement card ----
   const ACH_ICON = { codex: '◇', feat: '△', heritage: '⌬', omega: 'Ω' };
@@ -1177,85 +1064,11 @@
   }
   const presentY = () => { const wi = game.worldInfo(); return wi && wi.presentYears ? wi.presentYears : 0; };
   // ---- 系統樹: a fan, time from the centre outwards ----
-  let phyloSel = null; const phyloGeom = [];
-  // ======== Stage 6: the phylogeny in three layouts (phylotree.js), tied to the dish and the codon screen by the lineage id (game.sel) ========
-  const PT = OmegaPhyloTree, tview = PT.newView(); let tviewGame = null, tLay = null, tLayKey = '', tPtrBound = false, tInfoKey = '';
-  function bindPanZoom(c, view, onTap, redraw, cssOk) {
-    const ptr = new Map(); let tap = null, pinch = null; const local = (e) => { const r = c.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
-    c.style.touchAction = 'none';
-    c.addEventListener('pointerdown', (e) => { c.setPointerCapture(e.pointerId); ptr.set(e.pointerId, local(e)); if (ptr.size === 1) tap = { ...local(e), t: performance.now(), moved: 0 }; else { tap = null; const [p, q] = [...ptr.values()]; pinch = { d: Math.hypot(p.x - q.x, p.y - q.y), z: view.zoom }; } });
-    c.addEventListener('pointermove', (e) => { if (!ptr.has(e.pointerId)) return; const prev = ptr.get(e.pointerId), cur = local(e); ptr.set(e.pointerId, cur); const r = c.getBoundingClientRect(), R0 = Math.min(r.width, r.height) / 2;
-      if (ptr.size === 1) { view.px += (cur.x - prev.x) / R0; view.py += (cur.y - prev.y) / R0; if (tap) tap.moved += Math.hypot(cur.x - prev.x, cur.y - prev.y); } else if (ptr.size === 2 && pinch) { const [p, q] = [...ptr.values()]; view.zoom = Math.max(1, Math.min(10, pinch.z * Math.hypot(p.x - q.x, p.y - q.y) / Math.max(1, pinch.d))); }
-      const lim = view.zoom + 0.5; view.px = Math.max(-lim, Math.min(lim, view.px)); view.py = Math.max(-lim, Math.min(lim, view.py)); redraw(); });
-    const up = (e) => { const was = ptr.has(e.pointerId); ptr.delete(e.pointerId); if (ptr.size < 2) pinch = null; if (was && tap && ptr.size === 0 && tap.moved < 8 && performance.now() - tap.t < 600) onTap(tap.x, tap.y, c.getBoundingClientRect()); if (ptr.size === 0) tap = null; };
-    c.addEventListener('pointerup', up); c.addEventListener('pointercancel', up);
-    c.addEventListener('wheel', (e) => { e.preventDefault(); view.zoom = Math.max(1, Math.min(10, view.zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15))); redraw(); }, { passive: false });
-  }
-  function drawPhyloTab() {
-    const el = $('tab-phylo'); if (!game || !S4()) return;
-    if (tviewGame !== game) { tviewGame = game; tview.collapsed = new Set(); tview.selNode = null; el.innerHTML = ''; tPtrBound = false; tLayKey = ''; }
-    if (!el.firstChild) el.innerHTML = '<div class="dp-row" id="pt-modes"></div><canvas id="fan" width="360" height="360"></canvas><div id="fan-note" class="note"></div><div id="pt-detail"></div><div class="dp-row" id="pt-acts"></div><div id="pt-legend" class="dp-legend"></div>';
-    const c = $('fan'), p = game.phylo(tview.limit); if (!p) return; const sl = game.sel ? game.creatures.findIndex((q) => q.id === game.sel) : -1; tview.selLin = sl < 0 ? null : sl;
-    const key = [game.t, tview.mode, tview.limit, [...tview.collapsed].join(','), tview.selLin, tview.selNode].join('|'); if (key === tLayKey && c.width) return; tLayKey = key;
-    const Wc = c.clientWidth || 360, Hc = tview.mode === 'rect' ? Math.round(Wc * 0.9) : Wc; if (c.style.height !== Hc + 'px') c.style.height = Hc + 'px'; const dpr = Math.min(2, window.devicePixelRatio || 1); c.width = Math.round(Wc * dpr); c.height = Math.round(Hc * dpr); const ctx = c.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    tLay = PT.layout(p, tview.mode, { collapsed: tview.collapsed }); PT.draw(ctx, Wc, Hc, tLay, tview, p, p.roots.map((r) => r.color));
-    $('pt-modes').innerHTML = [['circle', '円形'], ['fan', '放射状'], ['rect', '矩形']].map(([m, t]) => `<button class="chip${tview.mode === m ? ' on' : ''}" data-pm="${m}">${t}</button>`).join('') + `<button class="chip${tview.limit > 160 ? ' on' : ''}" data-pl="1">${tview.limit > 160 ? '記録すべて' : '主な160'}</button><button class="chip" data-pr="1">表示を戻す</button>`;
-    $('fan-note').innerHTML = `表示${p.shown}／記録${p.tracked}件　消えた枝：${p.roots.filter((r) => r.lostClades).map((r) => `${r.name.replace(/型$/, '')}${r.lostClades}`).join('・') || 'なし'}。${p.note}<br>線の太さ＝系統、✕＝絶えた系統。タップで系統・イベントを選択、系統名の先頭の線をタップでたたむ。`;
-    const nd = tview.selNode !== null ? p.nodes.find((n) => n.id === tview.selNode) : null, L = tview.selLin !== null ? p.roots[tview.selLin] : null;
-    $('pt-detail').innerHTML = nd ? `<div class="dp-sel" style="border-color:${p.roots[nd.lin].color}"><div class="dp-name"><i style="background:${p.roots[nd.lin].color}"></i><b>${nd.label}</b></div><div class="dp-meta">${p.roots[nd.lin].name}　記録ID ${nd.id}　${(PT.KIND[nd.kind] || { ja: nd.kind }).ja}　状態：${nd.status === 'established' ? '定着' : nd.status === 'occurred' ? '発生（まだ定着していない）' : '消失'}　世界の開始から${G.jaYears(nd.y)}ごろ${nd.parent !== null ? '　親：記録ID ' + nd.parent : '　親：系統そのもの'}</div></div>` : L ? `<div class="dp-sel" style="border-color:${L.color}"><div class="dp-name"><i style="background:${L.color}"></i><b>${L.name}</b><span>${L.alive > 0 ? '現存 ' + L.alive + '体' : '絶滅'}</span></div><div class="dp-meta">記録イベント ${p.nodes.filter((n) => n.lin === L.lin).length}件（表示中）／消えた枝 ${L.lostClades}${L.ends.length ? '／絶えた記録 ' + L.ends.length + '回' : ''}</div></div>` : '<div class="dp-sel dim">点か線をタップすると、記録された情報が出ます。</div>';
-    $('pt-acts').innerHTML = L ? `<button class="chip" data-pa="dish">シャーレで見る</button><button class="chip" data-pa="codon">コドンで見る</button><button class="chip" data-pa="fold">${tview.collapsed.has(L.lin) ? '展開する' : 'たたむ'}</button>` : '';
-    $('pt-legend').innerHTML = PT.LEGEND.map(([k, t]) => `<div><b>${k}</b><span>${t}</span></div>`).join('');
-    $('pt-modes').querySelectorAll('[data-pm]').forEach((b) => { b.onclick = () => { tview.mode = b.dataset.pm; Object.assign(tview, { zoom: 1, px: 0, py: 0 }); tLayKey = ''; drawPhyloTab(); }; });
-    $('pt-modes').querySelectorAll('[data-pl]').forEach((b) => { b.onclick = () => { tview.limit = tview.limit > 160 ? 160 : 600; tLayKey = ''; drawPhyloTab(); }; });
-    $('pt-modes').querySelectorAll('[data-pr]').forEach((b) => { b.onclick = () => { Object.assign(tview, { zoom: 1, px: 0, py: 0 }); tLayKey = ''; drawPhyloTab(); }; });
-    $('pt-acts').querySelectorAll('[data-pa]').forEach((b) => { b.onclick = () => { const a = b.dataset.pa; if (a === 'fold') { const l = L.lin; if (tview.collapsed.has(l)) tview.collapsed.delete(l); else tview.collapsed.add(l); tLayKey = ''; drawPhyloTab(); } else { const t = document.querySelector(`#tabs [data-tab=${a === 'dish' ? 'world' : 'codon'}]`); if (a === 'dish') { const w = $('world'); if (w) w.scrollIntoView({ block: 'center' }); } else if (t) t.click(); } }; });
-    if (!tPtrBound) { tPtrBound = true; bindPanZoom(c, tview, (x, y, r) => { if (!tLay) return; const h = PT.hit(r.width, r.height, tLay, tview, x, y); if (!h) { game.sel = null; tview.selNode = null; } else { game.sel = game.creatures[h.lin].id; tview.selNode = h.type === 'node' ? h.id : null; } tLayKey = ''; drawPhyloTab(); }, () => { tLayKey = ''; drawPhyloTab(); }); }
-  }
-  // ---- コドン ----
-  let codonExpand = false; const CODON_COL = { tolerance: '#c9786e', metabolism: '#d9a35f', repairRate: '#7fb89a', dormancyDepth: '#7fb8c4', predation: '#a98cd6', movement: '#6f9fe0', immune: '#d4c46a', fecundity: '#d98fb0' };
-  function drawCodonTab() {
-    const si = game.sel ? game.creatures.findIndex((c) => c.id === game.sel) : -1, lin = si >= 0 ? si : game.controlled, info = game.codonInfo(lin), el = $('tab-codon');
-    const chipsHtml = () => game.dish2().lineages.map((l) => `<button class="lchip${l.lin === lin ? ' on' : ''}${l.extinct ? ' dead' : ''}" data-cl="${l.lin}" style="--c:${l.color}"><i></i><b>${l.name}</b><span>${l.extinct ? '絶' : l.alive + '体'}</span></button>`).join('');
-    const bindChips = () => el.querySelectorAll('[data-cl]').forEach((b) => { b.onclick = () => { game.sel = game.creatures[Number(b.dataset.cl)].id; drawCodonTab(); }; });
-    if (!info) { el.innerHTML = `<div class="dp-chips">${chipsHtml()}</div><div class="note">この系統は絶えているため、遺伝情報を取り出せません（絶えた系統の最後の構造は保存していません）。系統を切り替えてください。</div>`; bindChips(); return; }
-    if (!el.firstChild || !$('codon-cv')) el.innerHTML = '<div class="dp-chips" id="cx-lins"></div><div class="note" id="cx-disc"></div><div class="chips"><button class="chip" id="cx-tog"></button></div><canvas id="codon-cv" width="360" height="200"></canvas><div id="codon-num"></div><div id="cx-events"></div>';
-    $('cx-lins').innerHTML = chipsHtml(); bindChips();
-    $('cx-disc').innerHTML = '<b>これはこのゲーム独自の抽象モデルです。</b>実際のDNAの塩基配列やコドン表ではありません。1つの記号＝1つの機能単位で、その遺伝子がどの能力に影響するかを色で表しています。';
-    $('cx-tog').textContent = codonExpand ? '展開表示（機能に必要な長さ）' : '圧縮表示（実際の長さ）'; $('cx-tog').onclick = () => { codonExpand = !codonExpand; drawCodonTab(); };
-    const c = $('codon-cv'), W = c.clientWidth || 360, cell = 12, perRow = Math.max(8, Math.floor((W - 16) / cell)), genes = info.genes; c.width = Math.round(W * 2); const total = genes.reduce((s, g) => s + (codonExpand ? g.len0 : g.len), 0), MAXC = perRow * 14, rows = Math.min(14, Math.ceil(Math.min(total, MAXC) / perRow)); c.height = Math.round((rows * (cell + 6) + 14) * 2); c.style.height = (rows * (cell + 6) + 14) + 'px';
-    const ctx = c.getContext('2d'); ctx.setTransform(2, 0, 0, 2, 0, 0); ctx.clearRect(0, 0, W, rows * (cell + 6) + 14); let k = 0, shown = 0;
-    const pnodes = (game.phylo(160) || { nodes: [] }).nodes.filter((n) => n.lin === lin), selEv = pnodes.find((n) => n.id === tview.selNode), hiTrait = selEv && selEv.trait ? selEv.trait : null;
-    // a strip of base-pair-like rungs, left-top to right-bottom, turning back on itself at each row end (boustrophedon)
-    for (const g of genes) {
-      const n = codonExpand ? g.len0 : g.len, col = g.reg ? '#6c7a89' : g.eff.length ? CODON_COL[g.eff.slice().sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0][0]] || '#8895a3' : '#8895a3';
-      for (let q = 0; q < n; q++, k++) {
-        if (k >= MAXC) break; const row = Math.floor(k / perRow), pos = k % perRow, x = 8 + (row % 2 === 0 ? pos : perRow - 1 - pos) * cell + cell / 2, y = 10 + row * (cell + 6) + cell / 2;
-        ctx.globalAlpha = g.on ? 1 : 0.3; ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(x, y - 5); ctx.lineTo(x, y + 5); ctx.stroke(); ctx.beginPath(); ctx.arc(x, y - 5, 2, 0, 6.2832); ctx.fill(); ctx.beginPath(); ctx.arc(x, y + 5, 2, 0, 6.2832); ctx.fill();
-        if (g.sym) { ctx.strokeStyle = '#c58cf0'; ctx.beginPath(); ctx.arc(x, y, 7, 0, 6.2832); ctx.stroke(); }
-        if (hiTrait && g.eff.some((e) => e[0] === hiTrait)) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(x, y, 8.5, 0, 6.2832); ctx.stroke(); }
-        if (!g.on) { ctx.strokeStyle = '#e5586e'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x - 4, y - 4); ctx.lineTo(x + 4, y + 4); ctx.stroke(); }
-        if (!codonExpand && g.len0 > g.len && q === 0) { ctx.strokeStyle = '#f0f4f8'; ctx.beginPath(); ctx.moveTo(x - 6, y - 8); ctx.lineTo(x - 6, y - 6); ctx.stroke(); } // a packed gene is marked
-        shown++;
-      }
-      ctx.globalAlpha = 1; if (k >= MAXC) break;
-    }
-    const s = info.stats, ms = info.means, cost = info.costs;
-    $('codon-num').innerHTML = `<div class="g4"><div><small>表示の長さ</small><b>${codonExpand ? F.num(Math.round(s.Le)) : F.num(Math.round(s.Lp))}</b></div><div><small>物理的なゲノム長</small><b>${F.num(Math.round(s.Lp))}</b></div><div><small>機能情報</small><b>${F.small(s.info, 1)}</b></div><div><small>機能密度</small><b>${s.density.toFixed(2)}</b></div></div>
-      <div class="g4"><div><small>圧縮率</small><b>${Math.round(s.packed * 100)}%</b></div><div><small>冗長性</small><b>${Math.round(s.redundancy * 100)}%</b></div><div><small>祖先との比</small><b>${(s.Lp / s.L0).toFixed(2)}</b></div><div><small>展開した長さ</small><b>${F.num(Math.round(s.Le))}</b></div></div>
-      ${total > MAXC ? `<div class="note">長いので先頭の${F.num(MAXC)}個だけ表示しています（全体 ${F.num(total)}）。</div>` : ''}
-      <div class="card2"><div class="row2"><b>この構造が実際にかけている負担</b></div><div class="note">複製の費用 ×${cost.replication.toFixed(2)}／老化の進み ×${cost.ageing.toFixed(2)}／修復力 ×${cost.repair.toFixed(2)}／維持費 ${cost.upkeep.toFixed(3)}（1ステップ）</div></div>
-      <div class="note">凡例：色＝その遺伝子が主に影響する能力（${Object.entries({ tolerance: '耐性', metabolism: '代謝', repairRate: '修復', dormancyDepth: '休眠', predation: '捕食', movement: '移動', immune: '免疫', fecundity: '繁殖' }).map(([k2, v]) => `<i style="color:${CODON_COL[k2]}">■</i>${v}`).join(' ')}）、灰＝調節の遺伝子、薄い＝働いていない遺伝子、紫の輪＝取り込んだ共生体。<br>ゲーム独自の抽象化です。実際のDNAの塩基配列ではなく、「物理的な長さ」「機能の情報量」「圧縮後と展開後の長さ」は別の数字です。コドンは本来3塩基の単位ですが、ここでは作品固有の「Ωコドン」の考え方で、遺伝子の構造を指します。長すぎると複製・維持・損傷の代償があり、詰めすぎると修復の余地と頑健さを失います。</div>
-      <details><summary>この系統の平均（${ms ? F.num(ms.n) : 0}個体）と変化</summary>${info.series.length ? `<canvas id="codon-ser" width="320" height="90"></canvas>` : ''}<div class="note">物理長（実線）と機能情報（点線）の推移。</div></details>`;
-    { const SYM = { mutation: '✦', reorg: '⟲', separation: '⊘', fusion: '⊕', exchange: '⇄' }, evs = pnodes.slice().sort((x, y) => y.y - x.y).slice(0, 12), er = game.evoReport(), cnt = er && er.byLineage[lin] ? er.byLineage[lin] : null;
-      $('cx-events').innerHTML = `<div class="card2"><div class="row2"><b>記録された遺伝のできごと</b></div><div class="note">${cnt ? `この系統で記録された回数：強まる${cnt.strengthen}・弱まる${cnt.weaken}・新しい働き${cnt.newcap}・変質${cnt.alter}・<b>欠失</b>${cnt.loss}・行動${cnt.behaviour}・交換${cnt.exchange}・融合${cnt.fusion}・分離${cnt.separation}・圧縮${cnt.compress}・展開${cnt.unpack}。<b>重複（遺伝子の増幅）</b>はこのゲームでは記録していません（未記録）。` : '記録はまだありません。'}</div><div class="evl">${evs.length ? evs.map((n) => `<button class="evb${n.id === tview.selNode ? ' on' : ''}" data-ev="${n.id}"><span>${SYM[n.kind] || '・'}</span><b>${n.label.replace(/^[^：]*：/, '')}</b><small>ID ${n.id}・${n.status === 'established' ? '定着' : '発生'}</small></button>`).join('') : '<div class="note">表示できる個別のできごとはありません。</div>'}</div><div class="note">できごとをタップすると、その働きに関わる遺伝子に白い輪がつきます（対応は働きの種類による推定です）。系統樹でも同じ記録IDが選ばれます。</div><div class="note">印：紫の輪＝共生体由来（融合）／赤い斜線＝停止中／上の短い線＝圧縮された遺伝子／白い輪＝選んだできごとと同じ種類の働き。</div></div>`;
-      $('cx-events').querySelectorAll('[data-ev]').forEach((b) => { b.onclick = () => { const id = Number(b.dataset.ev); tview.selNode = tview.selNode === id ? null : id; tLayKey = ''; drawCodonTab(); }; }); }
-    if (info.series.length) { const sc = $('codon-ser'), ctx2 = sc.getContext('2d'), n = info.series.length, mx = Math.max(...info.series.map((x) => Math.max(x.Lp, x.info))) * 1.1 || 1; ctx2.clearRect(0, 0, 320, 90); for (const [key, dash, col] of [['Lp', [], '#8fb4d8'], ['info', [3, 3], '#c9d6a0']]) { ctx2.strokeStyle = col; ctx2.setLineDash(dash); ctx2.beginPath(); info.series.forEach((x, i) => { const px = n === 1 ? 160 : (i / (n - 1)) * 316 + 2, py = 86 - (x[key] / mx) * 80; if (i === 0) ctx2.moveTo(px, py); else ctx2.lineTo(px, py); }); ctx2.stroke(); } ctx2.setLineDash([]); }
-  }
   // ---- 詳細: the older screens, behind one tab ----
   const DETAIL_SUBS = [['stat', '状況'], ['ind', '個体'], ['trait', '形質'], ['graph', '推移'], ['env', '生息域'], ['world', '世界'], ['rank', 'ランク'], ['about', '説明']];
   const DETAIL_SET = new Set(DETAIL_SUBS.map((x) => x[0])); let detailSub = 'stat';
   let navKey = '';
-  function drawDetailNav() { const el = $('detailnav'); el.hidden = !(S4() && DETAIL_SET.has(tab)); if (el.hidden) { navKey = ''; return; } if (navKey === tab) return; navKey = tab; /* rebuilt only when the tab changes: a button that is replaced between touch-down and touch-up cannot be tapped */ el.innerHTML = DETAIL_SUBS.map(([k, n]) => `<button class="chip${tab === k ? ' on' : ''}" data-k="${k}">${n}</button>`).join(''); el.querySelectorAll('.chip').forEach((b) => { b.onclick = () => { detailSub = b.dataset.k; setTab(detailSub); }; }); }
+  function drawDetailNav() { const el = $('detailnav'), hide = !(S4() && DETAIL_SET.has(tab)); if (el.hidden !== hide) el.hidden = hide; if (el.hidden) { navKey = ''; return; } if (navKey === tab) return; navKey = tab; /* rebuilt only when the tab changes: a button that is replaced between touch-down and touch-up cannot be tapped */ el.innerHTML = DETAIL_SUBS.map(([k, n]) => `<button class="chip${tab === k ? ' on' : ''}" data-k="${k}">${n}</button>`).join(''); el.querySelectorAll('.chip').forEach((b) => { b.onclick = () => { detailSub = b.dataset.k; setTab(detailSub); }; }); }
   function setTab(t) { tab = t; const nav = document.querySelector('#tabs'); nav.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x.dataset.tab === t || (x.dataset.tab === 'detail' && DETAIL_SET.has(t) && S4()))); for (const id of ['world', 'stat', 'ind', 'rank', 'trait', 'graph', 'env', 'log', 'codex', 'phylo', 'codon', 'feats', 'about']) { const e = $('tab-' + id); if (e) e.hidden = id !== t; } drawDetailNav(); draw(true); }
   function drawAbout() {
     $('tab-about').innerHTML = `<div class="note"><b>時間のしくみ</b>：1ステップ＝30日とみなします。世界の時計（年）は、計算したステップと、跳躍（世界のモデルだけを進める）で進みます。跳躍のあと、実際の世代の代わりに最大240ステップだけ、突然変異を2倍にして計算します（近似）。省略した世代は進化として数えません。</div>
@@ -1264,12 +1077,11 @@
       <div class="note"><b>遺産と図鑑</b>：すべて実際の進化の記録です。能力を与えることはできません。遺産は、絶えた系統の遺伝子の断片が拾われることがあるというだけで、失敗や消失があります。</div>
       <div class="note"><b>仮定</b>：頻度・重み・基準値の多くはゲーム上の仮定で、科学的に実証したものではありません。詳細は設計記録にあります。</div>`;
   }
-  const dishRefresh = () => { if (S4()) drawDish2(); };
 
   let lastTabT = -999, tkN = -1, stratKey = '', linKey = '', rsT = -999;
   function draw(force) {
     if (!game) return; const st = game.live.stats();
-    if (S31()) drawHud31(); else drawHud(); if (S4()) drawDish2(); else if (game.cfg.realms) drawWorld2(st); else drawWorld(st);
+    if (S31()) drawHud31(); else drawHud(); if (S4()) views.drawDish2(); else if (game.cfg.realms) drawWorld2(st); else drawWorld(st);
     const lk = game.lineageReport().map((l) => (S31() ? (l.alive > 0 ? 1 : 0) : l.alive) + ':' + (game.rank.byLin[l.lin] && game.rank.byLin[l.lin].current ? game.rank.byLin[l.lin].current.rank : '')).join(',') + '|' + game.controlled; if (force || lk !== linKey) { linKey = lk; if (S31()) drawLinbar31(); else drawLinbar2(); }
     const th = ADAPT() ? game.threat() : null, sk = (ADAPT() ? game.strategies().join(',') + (th ? th.stance : '') : '') + '|' + game.controlled; if (force || sk !== stratKey) { stratKey = sk; if (S31()) drawStance31(); else drawStratbar(); }
     if (force || tkN !== game.events.length) { tkN = game.events.length; if (S4()) drawAch4(); else if (S31()) drawTicker31(); else drawTicker(); }
@@ -1277,8 +1089,8 @@
     const due = force || st.t - lastTabT >= 25; if (due && tab !== 'env') lastTabT = st.t;
     if (S4()) drawDetailNav();
     if (tab === 'codex') { if (due) drawCodexTab(); }
-    else if (tab === 'phylo') { if (due || force) drawPhyloTab(); }
-    else if (tab === 'codon') { if (due) drawCodonTab(); }
+    else if (tab === 'phylo') { if (due || force) views.drawPhyloTab(); }
+    else if (tab === 'codon') { if (due) views.drawCodonTab(); }
     else if (tab === 'feats') { if (due) drawFeatsTab(); }
     else if (tab === 'about') { if (force) drawAbout(); }
     else if (tab === 'log' && S4()) { if (due || logN !== game.events.length) { drawTimeline4(); logN = game.events.length; } }

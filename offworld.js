@@ -1,6 +1,6 @@
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory(); else root.OmegaOffworld = factory();
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./mulberry')); else root.OmegaOffworld = factory(root.OmegaMulberry);
+})(typeof globalThis !== 'undefined' ? globalThis : this, function (mulberry) {
   'use strict';
   // Life beyond the Earth: the minimum state the game needs so that it does not end while something is still alive out there (Stage 3.0).
   //
@@ -13,7 +13,6 @@
   // A lineage that was only carried by a civilisation is NEVER eligible for the Omega condition (omegaEligible=false): being transported is not autonomy.
   // Every rate and survival chance below is a GAME ASSUMPTION; there is no data to calibrate them against.
   const ROUTES = { self: { name: '自力で宇宙へ', text: '高い空に定着し、宇宙環境に耐える体を持つ系統が、ごくまれに宇宙へ出る（ゲーム上の仮定）。' }, ejecta: { name: '自然現象による放出', text: '天体衝突で飛び散った岩石に、休眠した生命が乗って宇宙へ出る。' }, transport: { name: '文明による輸送', text: '宇宙へ出る技術をもつ文明が、役に立つと見なした系統を運ぶ。自律的な生存とは認めない。' } };
-  function mulberry(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
   const poisson = (rng, lam) => { if (lam <= 0) return 0; if (lam > 30) return Math.round(lam); const L = Math.exp(-lam); let k = 0, p = 1; do { k++; p *= rng(); } while (p > L && k < 60); return k - 1; };
   const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
   function create(seed) { return { rng: mulberry((seed * 2891336453) ^ 0x1B873593), records: [], n: 0 }; }
